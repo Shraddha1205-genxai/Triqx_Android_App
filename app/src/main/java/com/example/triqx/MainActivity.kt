@@ -10,7 +10,13 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.tooling.preview.Preview
+import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.rememberNavController
+import com.example.triqx.ui.auth.AuthViewModel
+import com.example.triqx.ui.auth.LoginScreen
+import com.example.triqx.ui.auth.RegisterScreen
 import com.example.triqx.ui.theme.TriqxTheme
 
 class MainActivity : ComponentActivity() {
@@ -19,11 +25,37 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             TriqxTheme {
+                val navController = rememberNavController()
+                val authViewModel: AuthViewModel = viewModel()
+                
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    Greeting(
-                        name = "Android",
+                    NavHost(
+                        navController = navController,
+                        startDestination = "login",
                         modifier = Modifier.padding(innerPadding)
-                    )
+                    ) {
+                        composable("login") {
+                            LoginScreen(
+                                viewModel = authViewModel,
+                                onNavigateToRegister = { navController.navigate("register") },
+                                onLoginSuccess = { navController.navigate("home") {
+                                    popUpTo("login") { inclusive = true }
+                                } }
+                            )
+                        }
+                        composable("register") {
+                            RegisterScreen(
+                                viewModel = authViewModel,
+                                onNavigateBack = { navController.popBackStack() },
+                                onRegisterSuccess = { navController.navigate("home") {
+                                    popUpTo("login") { inclusive = true }
+                                } }
+                            )
+                        }
+                        composable("home") {
+                            HomeScreen(name = authViewModel.name.ifEmpty { authViewModel.email })
+                        }
+                    }
                 }
             }
         }
@@ -31,17 +63,6 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun Greeting(name: String, modifier: Modifier = Modifier) {
-    Text(
-        text = "Hello $name!",
-        modifier = modifier
-    )
-}
-
-@Preview(showBackground = true)
-@Composable
-fun GreetingPreview() {
-    TriqxTheme {
-        Greeting("Android")
-    }
+fun HomeScreen(name: String) {
+    Text(text = "Welcome, $name!", modifier = Modifier.fillMaxSize())
 }
