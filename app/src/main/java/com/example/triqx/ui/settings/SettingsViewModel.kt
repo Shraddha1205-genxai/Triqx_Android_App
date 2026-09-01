@@ -26,6 +26,9 @@ class SettingsViewModel @Inject constructor(
     private val _showDebugMenu = MutableStateFlow(prefs.getBoolean("show_debug_menu", false))
     val showDebugMenu: StateFlow<Boolean> = _showDebugMenu.asStateFlow()
 
+    private val _notificationReplyStyle = MutableStateFlow(prefs.getString("notification_reply_style", "body_numbered") ?: "body_numbered")
+    val notificationReplyStyle: StateFlow<String> = _notificationReplyStyle.asStateFlow()
+
     private val _isTesting = MutableStateFlow(false)
     val isTesting: StateFlow<Boolean> = _isTesting.asStateFlow()
 
@@ -35,6 +38,11 @@ class SettingsViewModel @Inject constructor(
     fun setShowDebugMenu(enabled: Boolean) {
         prefs.edit().putBoolean("show_debug_menu", enabled).apply()
         _showDebugMenu.value = enabled
+    }
+
+    fun setNotificationReplyStyle(style: String) {
+        prefs.edit().putString("notification_reply_style", style).apply()
+        _notificationReplyStyle.value = style
     }
 
     fun saveApiKey(key: String) {

@@ -5,6 +5,7 @@ import androidx.room.Room
 import com.example.triqx.data.local.AppDatabase
 import com.example.triqx.data.local.AppDao
 import com.example.triqx.data.local.ContactDao
+import com.example.triqx.data.local.ConversationDao
 import com.example.triqx.data.local.NotificationDao
 import dagger.Module
 import dagger.Provides
@@ -42,5 +43,10 @@ object DatabaseModule {
     @Provides
     fun provideNotificationDao(database: AppDatabase): NotificationDao {
         return database.notificationDao()
+    }
+
+    @Provides
+    fun provideConversationDao(database: AppDatabase): ConversationDao {
+        return database.conversationDao()
     }
 }

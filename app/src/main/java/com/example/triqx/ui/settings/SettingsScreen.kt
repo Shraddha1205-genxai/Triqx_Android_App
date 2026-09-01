@@ -2,7 +2,9 @@ package com.example.triqx.ui.settings
 
 import android.content.Intent
 import android.provider.Settings
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -38,6 +40,7 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
     val isTesting by viewModel.isTesting.collectAsState()
     val testResult by viewModel.testResult.collectAsState()
     val showDebugMenu by viewModel.showDebugMenu.collectAsState()
+    val notificationReplyStyle by viewModel.notificationReplyStyle.collectAsState()
 
     var apiKeyInput by remember(savedApiKey) { mutableStateOf(savedApiKey) }
     var passwordVisible by remember { mutableStateOf(false) }
@@ -239,7 +242,103 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
                 }
             }
 
-            // Section 2: SYSTEM ACCESS
+            // Section 2: NOTIFICATION ASSISTANT STYLE
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = "NOTIFICATION ASSISTANT STYLE",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                    letterSpacing = 1.sp,
+                    modifier = Modifier.padding(start = 4.dp)
+                )
+
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(18.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
+                    tonalElevation = 1.dp
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text(
+                            text = "Choose how 3 AI Smart Replies are displayed in your Android notification shade:",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+
+                        // Option 1: Full-Text in Body + Numbered Actions
+                        Surface(
+                            shape = RoundedCornerShape(14.dp),
+                            color = if (notificationReplyStyle == "body_numbered") MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f) else MaterialTheme.colorScheme.surface,
+                            border = if (notificationReplyStyle == "body_numbered") BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary) else null,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { viewModel.setNotificationReplyStyle("body_numbered") }
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(14.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                RadioButton(
+                                    selected = (notificationReplyStyle == "body_numbered"),
+                                    onClick = { viewModel.setNotificationReplyStyle("body_numbered") }
+                                )
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Approach 1: Full-Text Body + Numbered",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text(
+                                        text = "Displays full multi-line replies in notification text with 1️⃣ 2️⃣ 3️⃣ quick send buttons.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+
+                        // Option 2: Native Smart Reply Chips
+                        Surface(
+                            shape = RoundedCornerShape(14.dp),
+                            color = if (notificationReplyStyle == "chips_native") MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f) else MaterialTheme.colorScheme.surface,
+                            border = if (notificationReplyStyle == "chips_native") BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary) else null,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { viewModel.setNotificationReplyStyle("chips_native") }
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(14.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                RadioButton(
+                                    selected = (notificationReplyStyle == "chips_native"),
+                                    onClick = { viewModel.setNotificationReplyStyle("chips_native") }
+                                )
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Approach 3: Native Smart Reply Chips",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text(
+                                        text = "Uses Android native pill chips (setChoices) inside the notification.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Section 3: SYSTEM ACCESS
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
                     text = "SYSTEM ACCESS",

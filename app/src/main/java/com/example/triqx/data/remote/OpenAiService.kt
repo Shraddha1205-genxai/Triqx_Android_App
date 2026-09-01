@@ -4,13 +4,21 @@ import android.util.Log
 import com.example.triqx.data.local.NotificationEntity
 import com.google.gson.Gson
 import com.google.gson.JsonParser
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
+import java.io.IOException
 import java.util.concurrent.TimeUnit
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -18,8 +26,10 @@ import javax.inject.Singleton
 class OpenAiService @Inject constructor(
     private val gson: Gson
 ) {
+
     companion object {
         private const val TAG = "TriqxOpenAi"
+        private const val RESPONSES_URL = "https://api.openai.com/v1/responses"
     }
 
     private val client = OkHttpClient.Builder()
@@ -30,124 +40,412 @@ class OpenAiService @Inject constructor(
 
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
 
+    /**
+     * Returns exactly 3 AI-generated reply suggestions.
+     *
+     * messages are expected to be ordered:
+     * newest -> oldest
+     */
     suspend fun generate3Replies(
         apiKey: String,
         model: String,
         contactOrTitle: String,
         messages: List<NotificationEntity>
     ): List<String> = withContext(Dispatchers.IO) {
+
         if (apiKey.isBlank()) {
-            Log.w(TAG, "[OPENAI] API Key is blank. Using default offline fallback replies.")
-            return@withContext getDefaultReplies(messages.firstOrNull()?.text)
+            Log.w(
+                TAG,
+                "[OPENAI] API Key is blank. Using default offline fallback replies."
+            )
+
+            return@withContext getDefaultReplies(
+                messages.firstOrNull { !it.isFromYou() }?.text
+            )
         }
 
         try {
+            /*
+             * messages are assumed to be newest -> oldest.
+             *
+             * Only use the latest incoming message as the message
+             * that needs a reply.
+             */
+            val latestIncomingMessage = messages
+                .firstOrNull { !it.isFromYou() }
+                ?.text
+                .orEmpty()
+
             val formattedHistory = buildString {
                 appendLine("Conversation with $contactOrTitle:")
-                // Take up to last 10 messages in chronological order
-                val history = messages.take(10).reversed()
+
+                // Take up to the latest 10 messages.
+                // Convert newest -> oldest into oldest -> newest
+                // for the LLM's conversation context.
+                val history = messages
+                    .take(10)
+                    .reversed()
+
                 for (msg in history) {
-                    val sender = if (msg.title.equals("You", ignoreCase = true) || msg.text?.startsWith("Replied you using", ignoreCase = true) == true) {
+                    val sender = if (msg.isFromYou()) {
                         "You"
                     } else {
                         contactOrTitle
                     }
-                    appendLine("- $sender: ${msg.text ?: ""}")
+
+                    appendLine("- $sender: ${msg.text.orEmpty()}")
                 }
-                val latest = messages.firstOrNull()?.text ?: ""
-                appendLine("Latest incoming message to reply to: \"$latest\"")
+
+                appendLine()
+                appendLine(
+                    "Latest incoming message to reply to: \"$latestIncomingMessage\""
+                )
             }
 
-            val requestModel = model.ifBlank { "gpt-4o-mini" }
-            val requestBodyMap = mapOf(
+            val requestModel = model.ifBlank { "gpt-5.6-luna" }
+
+            /*
+             * Responses API request
+             */
+            val requestBody = mapOf(
                 "model" to requestModel,
-                "messages" to listOf(
-                    mapOf(
-                        "role" to "system",
-                        "content" to "You are a smart reply generator for mobile notifications. Generate EXACTLY 3 natural, concise reply options (each between 1 to 8 words) for the user to quickly send. Output ONLY a valid JSON array of 3 strings, e.g. [\"Working on it now!\", \"Yes, sounds good.\", \"I'll check and update you.\"]. Do NOT use markdown fences or explanations."
-                    ),
-                    mapOf(
-                        "role" to "user",
-                        "content" to formattedHistory
-                    )
-                )
+
+                "instructions" to """
+                    You are a smart reply generator for mobile notifications.
+
+                    Generate EXACTLY 3 natural and concise reply options for the user
+                    to quickly send.
+
+                    The replies should:
+                    - Match the context of the conversation.
+                    - Respond specifically to the latest incoming message.
+                    - Sound natural and human.
+                    - Vary slightly in tone when appropriate.
+                    - Never mention that you are an AI.
+                    - Never include explanations.
+                    - Never include markdown.
+
+                    Return ONLY a valid JSON array containing exactly 3 strings.
+
+                    Example:
+                    ["Working on it now!", "Yes, sounds good.", "I'll check and update you."]
+                """.trimIndent(),
+
+                "input" to formattedHistory
             )
 
-            val requestJson = gson.toJson(requestBodyMap)
+            val requestJson = gson.toJson(requestBody)
 
-            Log.i(TAG, "===> [SENT TO OPENAI] Model: $requestModel | Contact: $contactOrTitle | Messages: ${messages.size}")
-            Log.d(TAG, "===> [SENT TO OPENAI PROMPT]:\n$formattedHistory")
-            Log.v(TAG, "===> [SENT TO OPENAI JSON]: $requestJson")
+            Log.i(
+                TAG,
+                "===> [SENT TO OPENAI] Model: $requestModel | " +
+                        "Contact: $contactOrTitle | Messages: ${messages.size}"
+            )
+
+            Log.d(
+                TAG,
+                "===> [SENT TO OPENAI PROMPT]:\n$formattedHistory"
+            )
+
+            Log.v(
+                TAG,
+                "===> [SENT TO OPENAI JSON]: $requestJson"
+            )
 
             val request = Request.Builder()
-                .url("https://api.openai.com/v1/chat/completions")
+                .url(RESPONSES_URL)
                 .addHeader("Authorization", "Bearer $apiKey")
                 .addHeader("Content-Type", "application/json")
-                .post(requestJson.toRequestBody(jsonMediaType))
+                .post(
+                    requestJson.toRequestBody(jsonMediaType)
+                )
                 .build()
 
-            val response = client.newCall(request).execute()
-            val responseBody = response.body?.string()
+            client.executeCancellable(request).use { response ->
 
-            Log.i(TAG, "<=== [RECEIVED FROM OPENAI] HTTP Code: ${response.code} (${response.message})")
+                val responseBody = response.body?.string().orEmpty()
 
-            if (response.isSuccessful && !responseBody.isNullOrBlank()) {
-                Log.d(TAG, "<=== [RECEIVED FROM OPENAI RAW BODY]: $responseBody")
+                Log.i(
+                    TAG,
+                    "<=== [RECEIVED FROM OPENAI] " +
+                            "HTTP Code: ${response.code} (${response.message})"
+                )
 
-                val jsonObject = JsonParser.parseString(responseBody).asJsonObject
-                val choices = jsonObject.getAsJsonArray("choices")
-                if (choices != null && choices.size() > 0) {
-                    val content = choices[0].asJsonObject
-                        .getAsJsonObject("message")
-                        .get("content").asString.trim()
+                if (!response.isSuccessful || responseBody.isBlank()) {
+                    Log.e(
+                        TAG,
+                        "<=== [OPENAI REQUEST FAILED] " +
+                                "HTTP ${response.code}: $responseBody"
+                    )
 
-                    Log.d(TAG, "<=== [RECEIVED FROM OPENAI CONTENT]: $content")
+                    return@withContext getDefaultReplies(
+                        latestIncomingMessage
+                    )
+                }
 
-                    // Parse JSON array string
-                    val cleanJson = if (content.startsWith("```json")) {
-                        content.removePrefix("```json").removeSuffix("```").trim()
-                    } else if (content.startsWith("```")) {
-                        content.removePrefix("```").removeSuffix("```").trim()
-                    } else {
-                        content
+                Log.d(
+                    TAG,
+                    "<=== [RECEIVED FROM OPENAI RAW BODY]: $responseBody"
+                )
+
+                /*
+                 * Responses API returns:
+                 *
+                 * {
+                 *   "output": [
+                 *     {
+                 *       "type": "message",
+                 *       "content": [
+                 *         {
+                 *           "type": "output_text",
+                 *           "text": "[...]"
+                 *         }
+                 *       ]
+                 *     }
+                 *   ]
+                 * }
+                 */
+
+                val jsonObject = JsonParser
+                    .parseString(responseBody)
+                    .asJsonObject
+
+                val output = jsonObject
+                    .getAsJsonArray("output")
+
+                if (output == null || output.size() == 0) {
+                    Log.e(
+                        TAG,
+                        "[OPENAI] No output returned from Responses API."
+                    )
+
+                    return@withContext getDefaultReplies(
+                        latestIncomingMessage
+                    )
+                }
+
+                var contentText: String? = null
+
+                for (outputItemElement in output) {
+                    val outputItem = outputItemElement.asJsonObject
+
+                    if (outputItem.get("type")?.asString != "message") {
+                        continue
                     }
 
-                    val repliesArray = JsonParser.parseString(cleanJson).asJsonArray
-                    val list = mutableListOf<String>()
-                    for (element in repliesArray) {
-                        val str = element.asString.trim()
-                        if (str.isNotBlank()) {
-                            list.add(str)
+                    val contentArray = outputItem
+                        .getAsJsonArray("content")
+
+                    for (contentItemElement in contentArray) {
+                        val contentItem =
+                            contentItemElement.asJsonObject
+
+                        if (
+                            contentItem.get("type")?.asString ==
+                            "output_text"
+                        ) {
+                            contentText =
+                                contentItem.get("text")?.asString
+
+                            break
                         }
                     }
-                    if (list.isNotEmpty()) {
-                        val finalReplies = list.take(3)
-                        Log.i(TAG, "<=== [PARSED 3 REPLIES FROM OPENAI]: $finalReplies")
-                        return@withContext finalReplies
+
+                    if (!contentText.isNullOrBlank()) {
+                        break
                     }
                 }
-            } else {
-                Log.e(TAG, "<=== [OPENAI REQUEST FAILED] HTTP ${response.code}: $responseBody")
+
+                val content = contentText?.trim()
+
+                if (content.isNullOrBlank()) {
+                    Log.e(
+                        TAG,
+                        "[OPENAI] No output_text found in response."
+                    )
+
+                    return@withContext getDefaultReplies(
+                        latestIncomingMessage
+                    )
+                }
+
+                Log.d(
+                    TAG,
+                    "<=== [RECEIVED FROM OPENAI CONTENT]: $content"
+                )
+
+                /*
+                 * Parse the JSON array generated by the model.
+                 */
+                val cleanJson = content
+                    .removePrefix("```json")
+                    .removePrefix("```")
+                    .removeSuffix("```")
+                    .trim()
+
+                val repliesArray = try {
+                    JsonParser.parseString(cleanJson).asJsonArray
+                } catch (e: Exception) {
+                    Log.e(
+                        TAG,
+                        "[OPENAI] Failed to parse reply JSON: $cleanJson",
+                        e
+                    )
+
+                    return@withContext getDefaultReplies(
+                        latestIncomingMessage
+                    )
+                }
+
+                val replies = mutableListOf<String>()
+
+                for (element in repliesArray) {
+                    if (element.isJsonPrimitive &&
+                        element.asJsonPrimitive.isString
+                    ) {
+                        val reply = element.asString.trim()
+
+                        if (reply.isNotBlank()) {
+                            replies.add(reply)
+                        }
+                    }
+                }
+
+                if (replies.size >= 3) {
+                    val finalReplies = replies.take(3)
+
+                    Log.i(
+                        TAG,
+                        "<=== [PARSED 3 REPLIES FROM OPENAI]: $finalReplies"
+                    )
+
+                    return@withContext finalReplies
+                }
+
+                Log.w(
+                    TAG,
+                    "[OPENAI] Model returned fewer than 3 valid replies."
+                )
             }
+
+        } catch (e: CancellationException) {
+            Log.d(TAG, "[OPENAI] Request cancelled.")
+            throw e
         } catch (e: Exception) {
-            Log.e(TAG, "<=== [OPENAI EXCEPTION] Error communicating with OpenAI: ${e.message}", e)
-            e.printStackTrace()
+            Log.e(
+                TAG,
+                "<=== [OPENAI EXCEPTION] " +
+                        "Error communicating with OpenAI: ${e.message}",
+                e
+            )
         }
 
-        val fallback = getDefaultReplies(messages.firstOrNull()?.text)
-        Log.w(TAG, "---> [FALLBACK DEFAULTS] Returning default replies: $fallback")
+        val latestIncoming = messages
+            .firstOrNull { !it.isFromYou() }
+            ?.text
+
+        val fallback = getDefaultReplies(latestIncoming)
+
+        Log.w(
+            TAG,
+            "---> [FALLBACK DEFAULTS] Returning default replies: $fallback"
+        )
+
         fallback
     }
 
-    private fun getDefaultReplies(latestText: String?): List<String> {
-        val lower = latestText?.lowercase() ?: ""
+    /**
+     * Determines whether this notification/message was generated by the user.
+     */
+    private fun NotificationEntity.isFromYou(): Boolean {
+        return title.equals("You", ignoreCase = true) ||
+                text?.startsWith(
+                    "Replied you using",
+                    ignoreCase = true
+                ) == true
+    }
+
+    private fun getDefaultReplies(
+        latestText: String?
+    ): List<String> {
+
+        val lower = latestText
+            ?.lowercase()
+            .orEmpty()
+
         return when {
-            lower.contains("?") -> listOf("Yes, sure!", "Not yet, will check", "Let me get back to you")
-            lower.contains("call") -> listOf("Calling you in 5 mins", "Can't talk right now", "I'll call you later")
-            lower.contains("where") || lower.contains("reached") -> listOf("On my way!", "Almost there", "Will let you know")
-            lower.contains("thanks") || lower.contains("thank you") -> listOf("You're welcome!", "No problem!", "Anytime 😊")
-            lower.contains("ok") || lower.contains("okay") -> listOf("Sounds good!", "Great 👍", "See you!")
-            else -> listOf("Sounds good!", "Got it, thanks!", "I'll check and let you know")
+            lower.contains("?") -> {
+                listOf(
+                    "Yes, sure!",
+                    "Not yet, will check.",
+                    "Let me get back to you."
+                )
+            }
+
+            lower.contains("call") -> {
+                listOf(
+                    "Calling you in 5 mins.",
+                    "Can't talk right now.",
+                    "I'll call you later."
+                )
+            }
+
+            lower.contains("where") ||
+                    lower.contains("reached") -> {
+                listOf(
+                    "On my way!",
+                    "Almost there.",
+                    "Will let you know."
+                )
+            }
+
+            lower.contains("thanks") ||
+                    lower.contains("thank you") -> {
+                listOf(
+                    "You're welcome!",
+                    "No problem!",
+                    "Anytime 😊"
+                )
+            }
+
+            lower.contains("ok") ||
+                    lower.contains("okay") -> {
+                listOf(
+                    "Sounds good!",
+                    "Great 👍",
+                    "See you!"
+                )
+            }
+
+            else -> {
+                listOf(
+                    "Sounds good!",
+                    "Got it, thanks!",
+                    "I'll check and let you know."
+                )
+            }
         }
     }
+
+    /**
+     * Executes an OkHttp request cancellably with coroutines.
+     * When the coroutine is cancelled, the underlying OkHttp call is aborted immediately.
+     */
+    private suspend fun OkHttpClient.executeCancellable(request: Request): Response =
+        suspendCancellableCoroutine { continuation ->
+            val call = newCall(request)
+            continuation.invokeOnCancellation {
+                call.cancel()
+            }
+            call.enqueue(object : Callback {
+                override fun onResponse(call: Call, response: Response) {
+                    continuation.resume(response)
+                }
+
+                override fun onFailure(call: Call, e: IOException) {
+                    if (continuation.isCancelled) return
+                    continuation.resumeWithException(e)
+                }
+            })
+        }
 }

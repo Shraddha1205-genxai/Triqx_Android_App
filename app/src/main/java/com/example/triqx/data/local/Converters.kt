@@ -22,4 +22,20 @@ class Converters {
             emptyList()
         }
     }
+
+    @TypeConverter
+    fun fromChatMessageList(value: List<ChatMessage>?): String {
+        return gson.toJson(value ?: emptyList<ChatMessage>())
+    }
+
+    @TypeConverter
+    fun toChatMessageList(value: String?): List<ChatMessage> {
+        if (value.isNullOrEmpty()) return emptyList()
+        val listType = object : TypeToken<List<ChatMessage>>() {}.type
+        return try {
+            gson.fromJson(value, listType) ?: emptyList()
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
 }

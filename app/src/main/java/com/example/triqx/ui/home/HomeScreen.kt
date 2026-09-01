@@ -1,6 +1,7 @@
 package com.example.triqx.ui.home
 
 import android.content.Intent
+import android.net.Uri
 import android.provider.Settings
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
@@ -77,6 +78,7 @@ fun HomeScreen(
             groups
         } else {
             groups.filter { group ->
+                val titleMatch = group.title.contains(searchQuery, ignoreCase = true)
                 val contactMatch = group.contact?.displayName?.contains(searchQuery, ignoreCase = true) == true ||
                                    group.contact?.officialName?.contains(searchQuery, ignoreCase = true) == true ||
                                    group.contact?.phoneNumbers?.any { it.contains(searchQuery, ignoreCase = true) } == true ||
@@ -89,7 +91,7 @@ fun HomeScreen(
                     (it.text?.contains(searchQuery, ignoreCase = true) == true)
                 }
 
-                contactMatch || idMatch || pkgMatch || msgMatch
+                titleMatch || contactMatch || idMatch || pkgMatch || msgMatch
             }
         }
     }
@@ -385,30 +387,69 @@ fun HomeScreen(
                             isLoadingReplies = isLoadingReplies,
                             onViewContact = onViewContact,
                             onSendReply = { replyText ->
+                                // Try direct RemoteInput reply first
                                 val success = viewModel.replyToNotification(
                                     key = group.latestNotificationKey,
                                     replyMessage = replyText,
                                     packageName = group.packageName,
                                     contact = group.contact,
-                                    specificIdentifier = group.specificIdentifier
+                                    specificIdentifier = group.specificIdentifier,
+                                    groupKey = group.groupKey
                                 )
+
                                 if (success) {
                                     Toast.makeText(context, "Sent: $replyText", Toast.LENGTH_SHORT).show()
                                 } else {
+                                    // Record reply in DB since direct send failed
                                     viewModel.recordOutgoingReply(
                                         packageName = group.packageName,
                                         replyText = replyText,
                                         notificationKey = group.latestNotificationKey,
                                         contact = group.contact,
-                                        specificIdentifier = group.specificIdentifier
+                                        specificIdentifier = group.specificIdentifier,
+                                        groupKey = group.groupKey
                                     )
-                                    clipboardManager.setText(AnnotatedString(replyText))
-                                    val launchIntent = context.packageManager.getLaunchIntentForPackage(group.packageName)
-                                    if (launchIntent != null) {
-                                        Toast.makeText(context, "Copied reply! Opening app...", Toast.LENGTH_SHORT).show()
-                                        context.startActivity(launchIntent)
-                                    } else {
-                                        Toast.makeText(context, "Copied to clipboard: $replyText", Toast.LENGTH_SHORT).show()
+
+                                    // Fallback: Email intent or clipboard
+                                    val isEmailApp = group.packageName.let { pkg ->
+                                        pkg.contains("gm") || pkg.contains("email") || pkg.contains("outlook") || pkg.contains("mail")
+                                    }
+
+                                    val dispatched = if (isEmailApp) {
+                                        // Try to open a pre-filled email draft
+                                        val cleanEmail = group.specificIdentifier?.removePrefix("mailto:")?.trim()
+                                        val titleStr = group.contact?.displayName ?: group.notifications.firstOrNull()?.title ?: group.packageName
+                                        val subject = if (titleStr.startsWith("Re:", ignoreCase = true)) titleStr else "Re: $titleStr"
+
+                                        val emailIntent = Intent(Intent.ACTION_SENDTO).apply {
+                                            data = Uri.parse("mailto:${cleanEmail ?: ""}")
+                                            if (!cleanEmail.isNullOrBlank()) putExtra(Intent.EXTRA_EMAIL, arrayOf(cleanEmail))
+                                            putExtra(Intent.EXTRA_SUBJECT, subject)
+                                            putExtra(Intent.EXTRA_TEXT, replyText)
+                                            setPackage(group.packageName)
+                                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                        }
+
+                                        // Try package-specific, then generic email app
+                                        val sent = try { context.startActivity(emailIntent); true } catch (_: Exception) { false }
+                                        if (!sent) {
+                                            try { emailIntent.setPackage(null); context.startActivity(emailIntent); true } catch (_: Exception) { false }
+                                        } else {
+                                            Toast.makeText(context, "Opening email draft...", Toast.LENGTH_SHORT).show()
+                                            true
+                                        }
+                                    } else false
+
+                                    // Final fallback: copy to clipboard and open app
+                                    if (!dispatched) {
+                                        clipboardManager.setText(AnnotatedString(replyText))
+                                        val launchIntent = context.packageManager.getLaunchIntentForPackage(group.packageName)
+                                        if (launchIntent != null) {
+                                            Toast.makeText(context, "Copied reply! Opening app...", Toast.LENGTH_SHORT).show()
+                                            context.startActivity(launchIntent)
+                                        } else {
+                                            Toast.makeText(context, "Copied to clipboard", Toast.LENGTH_SHORT).show()
+                                        }
                                     }
                                 }
                             },
@@ -479,7 +520,7 @@ fun GoogleM3ConversationCard(
     var manualReplyText by remember { mutableStateOf("") }
     val dateFormat = remember { SimpleDateFormat("h:mm a", Locale.getDefault()) }
     val latest = group.notifications.first()
-    val groupTitle = group.contact?.displayName ?: (latest.title ?: group.packageName)
+    val groupTitle = group.title
     val avatarColors = remember(groupTitle) { PixelAvatarColors.getColorsForName(groupTitle) }
 
     // Chronological order for conversation bubbles (oldest at top -> newest at bottom)
