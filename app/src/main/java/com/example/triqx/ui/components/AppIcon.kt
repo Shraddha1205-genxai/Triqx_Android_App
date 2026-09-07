@@ -19,22 +19,25 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.util.Collections
 
 object AppIconCache {
     private const val MAX_ENTRIES = 250
     private val cache = LruCache<String, ImageBitmap>(MAX_ENTRIES)
+    private val failedPackages = Collections.synchronizedSet(HashSet<String>())
 
-    fun get(packageName: String): ImageBitmap? {
-        return synchronized(cache) {
-            cache.get(packageName)
-        }
-    }
+    fun get(packageName: String): ImageBitmap? = cache.get(packageName)
 
     fun put(packageName: String, bitmap: ImageBitmap) {
-        synchronized(cache) {
-            cache.put(packageName, bitmap)
-        }
+        cache.put(packageName, bitmap)
+        failedPackages.remove(packageName)
     }
+
+    fun markFailed(packageName: String) {
+        failedPackages.add(packageName)
+    }
+
+    fun isFailed(packageName: String): Boolean = failedPackages.contains(packageName)
 }
 
 @Composable
@@ -47,33 +50,33 @@ fun AppIcon(
     var bitmap by remember(packageName) { mutableStateOf(AppIconCache.get(packageName)) }
 
     LaunchedEffect(packageName) {
-        if (bitmap == null) {
+        if (bitmap == null && !AppIconCache.isFailed(packageName)) {
             val loaded = withContext(Dispatchers.IO) {
-                try {
-                    val cached = AppIconCache.get(packageName)
-                    if (cached != null) return@withContext cached
-
-                    val pm = context.packageManager
-                    val appInfo = pm.getApplicationInfo(packageName, 0)
-                    val drawable = pm.getApplicationIcon(appInfo)
-                    val imgBitmap = drawableToSoftwareImageBitmap(drawable, 96, 96)
-                    if (imgBitmap != null) {
-                        AppIconCache.put(packageName, imgBitmap)
+                AppIconCache.get(packageName) ?: run {
+                    try {
+                        val pm = context.packageManager
+                        val appInfo = pm.getApplicationInfo(packageName, 0)
+                        val drawable = pm.getApplicationIcon(appInfo)
+                        val imgBitmap = drawableToSoftwareImageBitmap(drawable, 96, 96)
+                        if (imgBitmap != null) {
+                            AppIconCache.put(packageName, imgBitmap)
+                        } else {
+                            AppIconCache.markFailed(packageName)
+                        }
+                        imgBitmap
+                    } catch (e: Throwable) {
+                        AppIconCache.markFailed(packageName)
+                        null
                     }
-                    imgBitmap
-                } catch (e: Throwable) {
-                    null
                 }
             }
             bitmap = loaded
         }
     }
 
-    val currentBitmap = bitmap ?: AppIconCache.get(packageName)
-
-    if (currentBitmap != null) {
+    if (bitmap != null) {
         Image(
-            bitmap = currentBitmap,
+            bitmap = bitmap!!,
             contentDescription = appName,
             modifier = modifier
         )

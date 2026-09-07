@@ -33,6 +33,7 @@ import com.example.triqx.ui.apps.AppSelectionScreen
 import com.example.triqx.ui.apps.ImportantAppsScreen
 import com.example.triqx.ui.contacts.ContactDetailsScreen
 import com.example.triqx.ui.contacts.PriorityContactsScreen
+import com.example.triqx.ui.home.ChatScreen
 import com.example.triqx.ui.home.HomeScreen
 import com.example.triqx.ui.navigation.TriqxBottomNavigationBar
 import com.example.triqx.ui.notifications.NotificationDetailsScreen
@@ -107,6 +108,10 @@ class MainActivity : ComponentActivity() {
                             val notificationViewModel: NotificationViewModel = hiltViewModel()
                             HomeScreen(
                                 viewModel = notificationViewModel,
+                                onConversationClick = { groupKey ->
+                                    val encoded = Uri.encode(groupKey)
+                                    navController.navigate("chat/$encoded")
+                                },
                                 onViewContact = { uri ->
                                     scope.launch {
                                         if (uri.startsWith("contact_id_")) {
@@ -137,6 +142,25 @@ class MainActivity : ComponentActivity() {
                                         popUpTo("home") { saveState = true }
                                         launchSingleTop = true
                                         restoreState = true
+                                    }
+                                }
+                            )
+                        }
+                        composable(
+                            route = "chat/{groupKey}",
+                            arguments = listOf(navArgument("groupKey") { type = NavType.StringType })
+                        ) { backStackEntry ->
+                            val encodedKey = backStackEntry.arguments?.getString("groupKey") ?: ""
+                            val groupKey = Uri.decode(encodedKey)
+                            val notificationViewModel: NotificationViewModel = hiltViewModel()
+                            ChatScreen(
+                                groupKey = groupKey,
+                                viewModel = notificationViewModel,
+                                onNavigateBack = { navController.popBackStack() },
+                                onViewContact = { uri ->
+                                    val contactId = uri.substringAfter("contact_id_").toIntOrNull()
+                                    if (contactId != null) {
+                                        navController.navigate("contact_details/$contactId")
                                     }
                                 }
                             )

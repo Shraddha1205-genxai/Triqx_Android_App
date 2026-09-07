@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -75,7 +76,7 @@ class OpenAiRepository @Inject constructor(
     val loadingGroups: StateFlow<Map<String, Boolean>> = _loadingGroups.asStateFlow()
 
     // --- Active In-Flight Jobs (groupKey -> Job) ---
-    private val activeJobsByGroup = mutableMapOf<String, Job>()
+    private val activeJobsByGroup = ConcurrentHashMap<String, Job>()
 
     init {
         loadRepliesFromDisk()
@@ -102,6 +103,11 @@ class OpenAiRepository @Inject constructor(
     // Reply Generation
     // =============================
 
+    /**
+     * Generate replies in the background (non-blocking).
+     * Skips if replies already exist for this exact message signature.
+     * Cancels any prior in-flight request for the same conversation group.
+     */
     /**
      * Generate replies in the background (non-blocking).
      * Skips if replies already exist for this exact message signature.
@@ -136,6 +142,49 @@ class OpenAiRepository @Inject constructor(
                 Log.e(TAG, "Error generating replies: ${e.message}")
             } finally {
                 // Only clear loading state if this job is still the active one
+                if (activeJobsByGroup[groupKey] == coroutineContext[Job]) {
+                    setLoading(groupKey, false)
+                    activeJobsByGroup.remove(groupKey)
+                }
+            }
+        }
+
+        activeJobsByGroup[groupKey] = job
+    }
+
+    /** ChatMessage overload for generateRepliesIfNeeded */
+    @JvmName("generateRepliesIfNeededForChat")
+    fun generateRepliesIfNeeded(
+        groupKey: String,
+        contactOrTitle: String,
+        messages: List<com.example.triqx.data.local.ChatMessage>
+    ) {
+        if (messages.isEmpty()) return
+
+        val signature = chatMessageSignature(messages)
+        val cached = _cache.value[groupKey]
+
+        if (cached != null && cached.messageSignature == signature) {
+            return
+        }
+
+        activeJobsByGroup[groupKey]?.cancel()
+
+        val job = scope.launch {
+            setLoading(groupKey, true)
+            try {
+                val replies = openAiService.generate3Replies(
+                    apiKey = _apiKey.value,
+                    model = _selectedModel.value,
+                    contactOrTitle = contactOrTitle,
+                    chatMessages = messages
+                )
+                cacheReplies(groupKey, signature, replies)
+            } catch (e: CancellationException) {
+                Log.d(TAG, "Reply generation cancelled for group '$groupKey'")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error generating replies: ${e.message}")
+            } finally {
                 if (activeJobsByGroup[groupKey] == coroutineContext[Job]) {
                     setLoading(groupKey, false)
                     activeJobsByGroup.remove(groupKey)
@@ -217,6 +266,44 @@ class OpenAiRepository @Inject constructor(
         activeJobsByGroup[groupKey] = job
     }
 
+    /** ChatMessage overload for regenerateReplies */
+    @JvmName("regenerateRepliesForChat")
+    fun regenerateReplies(
+        groupKey: String,
+        contactOrTitle: String,
+        messages: List<com.example.triqx.data.local.ChatMessage>
+    ) {
+        if (messages.isEmpty()) return
+
+        val signature = chatMessageSignature(messages)
+
+        activeJobsByGroup[groupKey]?.cancel()
+
+        val job = scope.launch {
+            setLoading(groupKey, true)
+            try {
+                val replies = openAiService.generate3Replies(
+                    apiKey = _apiKey.value,
+                    model = _selectedModel.value,
+                    contactOrTitle = contactOrTitle,
+                    chatMessages = messages
+                )
+                cacheReplies(groupKey, signature, replies)
+            } catch (e: CancellationException) {
+                Log.d(TAG, "Regenerate replies cancelled for group '$groupKey'")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error generating replies: ${e.message}")
+            } finally {
+                if (activeJobsByGroup[groupKey] == coroutineContext[Job]) {
+                    setLoading(groupKey, false)
+                    activeJobsByGroup.remove(groupKey)
+                }
+            }
+        }
+
+        activeJobsByGroup[groupKey] = job
+    }
+
     /**
      * Test API connection with a sample message.
      */
@@ -249,7 +336,7 @@ class OpenAiRepository @Inject constructor(
     // Helpers
     // =============================
 
-    /** Creates a signature string for the latest message in a conversation. */
+    /** Creates a signature string for the latest message in a conversation (NotificationEntity). */
     private fun messageSignature(
         messages: List<NotificationEntity>
     ): String {
@@ -260,7 +347,18 @@ class OpenAiRepository @Inject constructor(
                latest.timestamp
     }
 
-    /** Call OpenAI API to generate 3 replies. */
+    /** Creates a signature string for the latest ChatMessage in a conversation. */
+    private fun chatMessageSignature(
+        messages: List<com.example.triqx.data.local.ChatMessage>
+    ): String {
+        val latest = messages.first()
+
+        return "${latest.senderName.trim()}|" +
+               "${latest.bodyText.trim()}|" +
+               latest.timestamp
+    }
+
+    /** Call OpenAI API to generate 3 replies (NotificationEntity). */
     private suspend fun callOpenAi(contactOrTitle: String, messages: List<NotificationEntity>): List<String> {
         return openAiService.generate3Replies(
             apiKey = _apiKey.value,

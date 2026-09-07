@@ -230,18 +230,21 @@ class TriqxReplyReceiver : BroadcastReceiver() {
         val updatedMessages = ((current?.messages ?: emptyList()) + chatMessage)
             .sortedByDescending { it.timestamp }
 
-        conversationDao.insertOrUpdate(
-            ConversationEntity(
-                conversationKey = conversationKey,
-                packageName = packageName,
-                contactId = contactId ?: current?.contactId,
-                title = contactOrTitle.ifBlank { current?.title ?: packageName },
-                specificIdentifier = specificIdentifier ?: current?.specificIdentifier,
-                messages = updatedMessages,
-                latestTimestamp = timestamp,
-                latestNotificationKey = notificationKey
-            )
+        val cleanTitle = current?.title ?: contactOrTitle.takeIf { !it.equals("You", ignoreCase = true) } ?: packageName
+
+        val entityToSave = ConversationEntity(
+            conversationKey = conversationKey,
+            packageName = packageName,
+            contactId = contactId ?: current?.contactId,
+            title = cleanTitle,
+            specificIdentifier = specificIdentifier ?: current?.specificIdentifier,
+            messages = updatedMessages,
+            latestTimestamp = timestamp,
+            latestNotificationKey = notificationKey
         )
+        conversationDao.insertOrUpdate(entityToSave)
+
+        Log.i(TAG, "===> [CONVERSATION TABLE OUTGOING] key='$conversationKey', title='$cleanTitle', replyText='$replyText', totalMsgs=${updatedMessages.size}")
     }
 
     private fun isEmailApp(packageName: String): Boolean {

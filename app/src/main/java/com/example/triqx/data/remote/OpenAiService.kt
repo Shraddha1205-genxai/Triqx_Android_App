@@ -1,6 +1,7 @@
 package com.example.triqx.data.remote
 
 import android.util.Log
+import com.example.triqx.data.local.ChatMessage
 import com.example.triqx.data.local.NotificationEntity
 import com.google.gson.Gson
 import com.google.gson.JsonParser
@@ -41,10 +42,65 @@ class OpenAiService @Inject constructor(
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
 
     /**
-     * Returns exactly 3 AI-generated reply suggestions.
-     *
-     * messages are expected to be ordered:
-     * newest -> oldest
+     * Returns exactly 3 AI-generated reply suggestions for a list of ChatMessages.
+     */
+    @JvmName("generate3RepliesForChat")
+    suspend fun generate3Replies(
+        apiKey: String,
+        model: String,
+        contactOrTitle: String,
+        chatMessages: List<ChatMessage>
+    ): List<String> = withContext(Dispatchers.IO) {
+        if (apiKey.isBlank()) {
+            Log.w(
+                TAG,
+                "[OPENAI] API Key is blank. Using default offline fallback replies."
+            )
+            return@withContext getDefaultReplies(
+                chatMessages.firstOrNull { !it.isFromYou }?.bodyText
+            )
+        }
+
+        val latestIncomingMessage = chatMessages
+            .firstOrNull { !it.isFromYou }
+            ?.bodyText
+            .orEmpty()
+
+        val formattedHistory = buildString {
+            appendLine("Conversation with $contactOrTitle:")
+            val history = chatMessages
+                .take(10)
+                .reversed()
+
+            for (msg in history) {
+                val sender = if (msg.isFromYou) {
+                    "You"
+                } else if (msg.senderName.isNotBlank() && !msg.senderName.equals("You", ignoreCase = true)) {
+                    msg.senderName
+                } else {
+                    contactOrTitle
+                }
+                appendLine("- $sender: ${msg.bodyText}")
+            }
+
+            appendLine()
+            appendLine(
+                "Latest incoming message to reply to: \"$latestIncomingMessage\""
+            )
+        }
+
+        executeResponsesApi(
+            apiKey = apiKey,
+            model = model,
+            contactOrTitle = contactOrTitle,
+            messageCount = chatMessages.size,
+            latestIncomingMessage = latestIncomingMessage,
+            formattedHistory = formattedHistory
+        )
+    }
+
+    /**
+     * Returns exactly 3 AI-generated reply suggestions for a list of NotificationEntities.
      */
     suspend fun generate3Replies(
         apiKey: String,
@@ -64,49 +120,55 @@ class OpenAiService @Inject constructor(
             )
         }
 
-        try {
-            /*
-             * messages are assumed to be newest -> oldest.
-             *
-             * Only use the latest incoming message as the message
-             * that needs a reply.
-             */
-            val latestIncomingMessage = messages
-                .firstOrNull { !it.isFromYou() }
-                ?.text
-                .orEmpty()
+        val latestIncomingMessage = messages
+            .firstOrNull { !it.isFromYou() }
+            ?.text
+            .orEmpty()
 
-            val formattedHistory = buildString {
-                appendLine("Conversation with $contactOrTitle:")
+        val formattedHistory = buildString {
+            appendLine("Conversation with $contactOrTitle:")
 
-                // Take up to the latest 10 messages.
-                // Convert newest -> oldest into oldest -> newest
-                // for the LLM's conversation context.
-                val history = messages
-                    .take(10)
-                    .reversed()
+            val history = messages
+                .take(10)
+                .reversed()
 
-                for (msg in history) {
-                    val sender = if (msg.isFromYou()) {
-                        "You"
-                    } else {
-                        contactOrTitle
-                    }
-
-                    appendLine("- $sender: ${msg.text.orEmpty()}")
+            for (msg in history) {
+                val sender = if (msg.isFromYou()) {
+                    "You"
+                } else {
+                    contactOrTitle
                 }
 
-                appendLine()
-                appendLine(
-                    "Latest incoming message to reply to: \"$latestIncomingMessage\""
-                )
+                appendLine("- $sender: ${msg.text.orEmpty()}")
             }
 
-            val requestModel = model.ifBlank { "gpt-5.6-luna" }
+            appendLine()
+            appendLine(
+                "Latest incoming message to reply to: \"$latestIncomingMessage\""
+            )
+        }
 
-            /*
-             * Responses API request
-             */
+        executeResponsesApi(
+            apiKey = apiKey,
+            model = model,
+            contactOrTitle = contactOrTitle,
+            messageCount = messages.size,
+            latestIncomingMessage = latestIncomingMessage,
+            formattedHistory = formattedHistory
+        )
+    }
+
+    private suspend fun executeResponsesApi(
+        apiKey: String,
+        model: String,
+        contactOrTitle: String,
+        messageCount: Int,
+        latestIncomingMessage: String,
+        formattedHistory: String
+    ): List<String> = withContext(Dispatchers.IO) {
+        val requestModel = model.ifBlank { "gpt-5.6-luna" }
+
+        return@withContext try {
             val requestBody = mapOf(
                 "model" to requestModel,
 
@@ -139,7 +201,7 @@ class OpenAiService @Inject constructor(
             Log.i(
                 TAG,
                 "===> [SENT TO OPENAI] Model: $requestModel | " +
-                        "Contact: $contactOrTitle | Messages: ${messages.size}"
+                        "Contact: $contactOrTitle | Messages: $messageCount"
             )
 
             Log.d(
@@ -328,6 +390,15 @@ class OpenAiService @Inject constructor(
                 )
             }
 
+            val fallback = getDefaultReplies(latestIncomingMessage)
+
+            Log.w(
+                TAG,
+                "---> [FALLBACK DEFAULTS] Returning default replies: $fallback"
+            )
+
+            return@withContext fallback
+
         } catch (e: CancellationException) {
             Log.d(TAG, "[OPENAI] Request cancelled.")
             throw e
@@ -338,20 +409,9 @@ class OpenAiService @Inject constructor(
                         "Error communicating with OpenAI: ${e.message}",
                 e
             )
+
+            return@withContext getDefaultReplies(latestIncomingMessage)
         }
-
-        val latestIncoming = messages
-            .firstOrNull { !it.isFromYou() }
-            ?.text
-
-        val fallback = getDefaultReplies(latestIncoming)
-
-        Log.w(
-            TAG,
-            "---> [FALLBACK DEFAULTS] Returning default replies: $fallback"
-        )
-
-        fallback
     }
 
     /**

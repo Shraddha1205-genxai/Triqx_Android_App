@@ -1,58 +1,40 @@
 package com.example.triqx.ui.home
 
 import android.content.Intent
-import android.net.Uri
 import android.provider.Settings
 import android.widget.Toast
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Contacts
 import androidx.compose.material.icons.filled.DeleteSweep
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.ExpandLess
-import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Grid3x3
 import androidx.compose.material.icons.filled.NotificationsActive
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import com.example.triqx.data.local.NotificationEntity
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.triqx.data.local.ChatMessage
 import com.example.triqx.ui.components.AppIcon
-import com.example.triqx.ui.notifications.ClubbedNotificationGroup
+import com.example.triqx.ui.notifications.Conversation
 import com.example.triqx.ui.notifications.NotificationViewModel
-import com.example.triqx.ui.theme.PixelAvatarColors
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -60,17 +42,15 @@ import java.util.*
 @Composable
 fun HomeScreen(
     viewModel: NotificationViewModel,
+    onConversationClick: (String) -> Unit,
     onViewContact: (String) -> Unit,
     onNavigateToContacts: () -> Unit,
     onNavigateToApps: () -> Unit
 ) {
     val context = LocalContext.current
-    val clipboardManager = LocalClipboardManager.current
-    val groups by viewModel.groupedPriorityNotifications.collectAsState()
-    val cachedReplies by viewModel.cachedReplies.collectAsState()
-    val loadingGroups by viewModel.loadingGroups.collectAsState()
+    val groups by viewModel.groupedPriorityNotifications.collectAsStateWithLifecycle()
     val isEnabled = viewModel.isNotificationServiceEnabled()
-    var searchQuery by remember { mutableStateOf("") }
+    var searchQuery by rememberSaveable { mutableStateOf("") }
     var showClearConfirmDialog by remember { mutableStateOf(false) }
 
     val filteredGroups = remember(groups, searchQuery) {
@@ -86,9 +66,9 @@ fun HomeScreen(
 
                 val idMatch = group.specificIdentifier?.contains(searchQuery, ignoreCase = true) == true
                 val pkgMatch = group.packageName.contains(searchQuery, ignoreCase = true)
-                val msgMatch = group.notifications.any {
-                    (it.title?.contains(searchQuery, ignoreCase = true) == true) ||
-                    (it.text?.contains(searchQuery, ignoreCase = true) == true)
+                val msgMatch = group.messages.any {
+                    it.senderName.contains(searchQuery, ignoreCase = true) ||
+                    it.bodyText.contains(searchQuery, ignoreCase = true)
                 }
 
                 titleMatch || contactMatch || idMatch || pkgMatch || msgMatch
@@ -97,7 +77,7 @@ fun HomeScreen(
     }
 
     val totalMessages = remember(groups) {
-        groups.sumOf { it.notifications.size }
+        groups.sumOf { it.messages.size }
     }
 
     Scaffold(
@@ -171,7 +151,7 @@ fun HomeScreen(
                         }
                     }
 
-                    // Profile / VIP Count Avatar Badge
+                    // VIP Count Avatar Badge
                     Surface(
                         modifier = Modifier.size(32.dp),
                         shape = CircleShape,
@@ -318,7 +298,7 @@ fun HomeScreen(
                         )
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            text = "Notifications from your Priority Contacts and Important Apps will appear here with OpenAI smart replies.",
+                            text = "Notifications from your Priority Contacts and Important Apps will appear here as WhatsApp-style chats.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             textAlign = androidx.compose.ui.text.style.TextAlign.Center,
@@ -368,6 +348,14 @@ fun HomeScreen(
                     )
                 }
             } else {
+                val onViewContactStable = remember(onViewContact) { onViewContact }
+                val onDismissGroupAction = remember(viewModel, context) {
+                    { group: Conversation ->
+                        viewModel.dismissGroup(group)
+                        Toast.makeText(context, "Dismissed", Toast.LENGTH_SHORT).show()
+                    }
+                }
+
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 80.dp),
@@ -378,92 +366,18 @@ fun HomeScreen(
                         key = { it.groupKey },
                         contentType = { "conversation_card" }
                     ) { group ->
-                        val replies = cachedReplies[group.groupKey] ?: emptyList()
-                        val isLoadingReplies = loadingGroups[group.groupKey] == true
+                        val dismissHandler = remember(group.groupKey, onDismissGroupAction) {
+                            { onDismissGroupAction(group) }
+                        }
+                        val clickHandler = remember(group.groupKey, onConversationClick) {
+                            { onConversationClick(group.groupKey) }
+                        }
 
-                        GoogleM3ConversationCard(
+                        WhatsAppConversationCard(
                             group = group,
-                            smartReplies = replies,
-                            isLoadingReplies = isLoadingReplies,
-                            onViewContact = onViewContact,
-                            onSendReply = { replyText ->
-                                // Try direct RemoteInput reply first
-                                val success = viewModel.replyToNotification(
-                                    key = group.latestNotificationKey,
-                                    replyMessage = replyText,
-                                    packageName = group.packageName,
-                                    contact = group.contact,
-                                    specificIdentifier = group.specificIdentifier,
-                                    groupKey = group.groupKey
-                                )
-
-                                if (success) {
-                                    Toast.makeText(context, "Sent: $replyText", Toast.LENGTH_SHORT).show()
-                                } else {
-                                    // Record reply in DB since direct send failed
-                                    viewModel.recordOutgoingReply(
-                                        packageName = group.packageName,
-                                        replyText = replyText,
-                                        notificationKey = group.latestNotificationKey,
-                                        contact = group.contact,
-                                        specificIdentifier = group.specificIdentifier,
-                                        groupKey = group.groupKey
-                                    )
-
-                                    // Fallback: Email intent or clipboard
-                                    val isEmailApp = group.packageName.let { pkg ->
-                                        pkg.contains("gm") || pkg.contains("email") || pkg.contains("outlook") || pkg.contains("mail")
-                                    }
-
-                                    val dispatched = if (isEmailApp) {
-                                        // Try to open a pre-filled email draft
-                                        val cleanEmail = group.specificIdentifier?.removePrefix("mailto:")?.trim()
-                                        val titleStr = group.contact?.displayName ?: group.notifications.firstOrNull()?.title ?: group.packageName
-                                        val subject = if (titleStr.startsWith("Re:", ignoreCase = true)) titleStr else "Re: $titleStr"
-
-                                        val emailIntent = Intent(Intent.ACTION_SENDTO).apply {
-                                            data = Uri.parse("mailto:${cleanEmail ?: ""}")
-                                            if (!cleanEmail.isNullOrBlank()) putExtra(Intent.EXTRA_EMAIL, arrayOf(cleanEmail))
-                                            putExtra(Intent.EXTRA_SUBJECT, subject)
-                                            putExtra(Intent.EXTRA_TEXT, replyText)
-                                            setPackage(group.packageName)
-                                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                                        }
-
-                                        // Try package-specific, then generic email app
-                                        val sent = try { context.startActivity(emailIntent); true } catch (_: Exception) { false }
-                                        if (!sent) {
-                                            try { emailIntent.setPackage(null); context.startActivity(emailIntent); true } catch (_: Exception) { false }
-                                        } else {
-                                            Toast.makeText(context, "Opening email draft...", Toast.LENGTH_SHORT).show()
-                                            true
-                                        }
-                                    } else false
-
-                                    // Final fallback: copy to clipboard and open app
-                                    if (!dispatched) {
-                                        clipboardManager.setText(AnnotatedString(replyText))
-                                        val launchIntent = context.packageManager.getLaunchIntentForPackage(group.packageName)
-                                        if (launchIntent != null) {
-                                            Toast.makeText(context, "Copied reply! Opening app...", Toast.LENGTH_SHORT).show()
-                                            context.startActivity(launchIntent)
-                                        } else {
-                                            Toast.makeText(context, "Copied to clipboard", Toast.LENGTH_SHORT).show()
-                                        }
-                                    }
-                                }
-                            },
-                            onRegenerateReplies = {
-                                viewModel.regenerateRepliesForGroup(group)
-                                Toast.makeText(context, "Generating fresh AI replies...", Toast.LENGTH_SHORT).show()
-                            },
-                            onDismissGroup = {
-                                viewModel.dismissGroup(group)
-                                Toast.makeText(context, "Dismissed", Toast.LENGTH_SHORT).show()
-                            },
-                            onDismissNotification = { notif ->
-                                viewModel.dismissNotification(notif)
-                            }
+                            onClick = clickHandler,
+                            onDismissGroup = dismissHandler,
+                            onViewContact = onViewContactStable
                         )
                     }
                 }
@@ -506,488 +420,160 @@ fun HomeScreen(
 }
 
 @Composable
-fun GoogleM3ConversationCard(
-    group: ClubbedNotificationGroup,
-    smartReplies: List<String>,
-    isLoadingReplies: Boolean,
-    onViewContact: (String) -> Unit,
-    onSendReply: (String) -> Unit,
-    onRegenerateReplies: () -> Unit,
+fun WhatsAppConversationCard(
+    group: Conversation,
+    onClick: () -> Unit,
     onDismissGroup: () -> Unit,
-    onDismissNotification: (NotificationEntity) -> Unit
+    onViewContact: (String) -> Unit
 ) {
-    var isExpanded by remember { mutableStateOf(false) }
-    var manualReplyText by remember { mutableStateOf("") }
     val dateFormat = remember { SimpleDateFormat("h:mm a", Locale.getDefault()) }
-    val latest = group.notifications.first()
+    val formattedDate = remember(group.latestTimestamp) {
+        dateFormat.format(Date(group.latestTimestamp))
+    }
+    val latest = group.messages.firstOrNull()
     val groupTitle = group.title
-    val avatarColors = remember(groupTitle) { PixelAvatarColors.getColorsForName(groupTitle) }
 
-    // Chronological order for conversation bubbles (oldest at top -> newest at bottom)
-    val chronologicalMessages = remember(group.notifications) {
-        group.notifications.reversed()
+    val recentMessagePreview = remember(latest, groupTitle) {
+        if (latest == null) ""
+        else {
+            val prefix = when {
+                latest.isFromYou -> "You: "
+                latest.senderName.isNotBlank() &&
+                        !latest.senderName.equals(groupTitle, ignoreCase = true) &&
+                        !latest.senderName.equals("You", ignoreCase = true) -> "${latest.senderName}: "
+                else -> ""
+            }
+            val cleanBody = latest.bodyText.ifBlank { "No content" }.replace('\n', ' ').trim()
+            "$prefix$cleanBody"
+        }
     }
 
-    val openContactAction = {
-        val uri = latest.contactLookupUri
-        if (uri != null) {
-            onViewContact(uri)
-        } else if (group.contact != null) {
-            onViewContact("contact_id_${group.contact.id}")
+    val appName = remember(group.packageName) {
+        when {
+            group.packageName.contains("whatsapp", ignoreCase = true) -> "WhatsApp"
+            group.packageName.contains("messaging", ignoreCase = true) || group.packageName.contains("mms", ignoreCase = true) -> "Messages"
+            group.packageName.contains("gm", ignoreCase = true) || group.packageName.contains("gmail", ignoreCase = true) -> "Gmail"
+            group.packageName.contains("slack", ignoreCase = true) -> "Slack"
+            group.packageName.contains("telegram", ignoreCase = true) -> "Telegram"
+            else -> group.packageName.substringAfterLast('.').replaceFirstChar { it.uppercase() }
         }
     }
 
     Surface(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(20.dp))
+            .clickable { onClick() },
         shape = RoundedCornerShape(20.dp),
         color = MaterialTheme.colorScheme.surfaceContainerLow,
         tonalElevation = 1.dp
     ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // Header Row: Avatar + Contact Info + Time + Dismiss
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            // Squircle Avatar
+            Box(
+                modifier = Modifier
+                    .size(46.dp)
+                    .clickable {
+                        if (group.contact != null) {
+                            onViewContact("contact_id_${group.contact.id}")
+                        } else {
+                            onClick()
+                        }
+                    }
             ) {
-                // Squircle Avatar (Clickable to View Contact) with Micro App Badge
-                Box(
+                Surface(
                     modifier = Modifier
                         .size(46.dp)
-                        .clip(RoundedCornerShape(14.dp))
-                        .clickable(enabled = group.contact != null || latest.contactLookupUri != null) {
-                            openContactAction()
-                        }
+                        .shadow(2.dp, RoundedCornerShape(14.dp)),
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.surface
                 ) {
-                    Surface(
-                        modifier = Modifier.size(46.dp),
-                        shape = RoundedCornerShape(14.dp),
-                        color = avatarColors.first
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Text(
-                                text = groupTitle.trim().take(1).uppercase().ifEmpty { "?" },
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = avatarColors.second
-                            )
-                        }
-                    }
-
-                    // Micro App Icon Badge
-                    Surface(
+                    AppIcon(
+                        packageName = group.packageName,
+                        appName = groupTitle,
                         modifier = Modifier
-                            .align(Alignment.BottomEnd)
-                            .size(18.dp),
-                        shape = RoundedCornerShape(5.dp),
-                        color = MaterialTheme.colorScheme.surface,
-                        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                    ) {
-                        AppIcon(
-                            packageName = group.packageName,
-                            appName = groupTitle,
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(1.dp)
-                        )
-                    }
-                }
-
-                // Name & Subtitle
-                Column(modifier = Modifier.weight(1f)) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        Text(
-                            text = groupTitle,
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        if (group.contact != null) {
-                            Surface(
-                                shape = RoundedCornerShape(4.dp),
-                                color = MaterialTheme.colorScheme.primaryContainer
-                            ) {
-                                Text(
-                                    text = "VIP",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
-                                )
-                            }
-                        }
-                    }
-
-                    val appName = remember(group.packageName) {
-                        when {
-                            group.packageName.contains("whatsapp", ignoreCase = true) -> "WhatsApp"
-                            group.packageName.contains("messaging", ignoreCase = true) || group.packageName.contains("mms", ignoreCase = true) -> "Messages"
-                            group.packageName.contains("gm", ignoreCase = true) || group.packageName.contains("gmail", ignoreCase = true) -> "Gmail"
-                            group.packageName.contains("slack", ignoreCase = true) -> "Slack"
-                            group.packageName.contains("telegram", ignoreCase = true) -> "Telegram"
-                            else -> group.packageName.substringAfterLast('.').replaceFirstChar { it.uppercase() }
-                        }
-                    }
-
-                    Text(
-                        text = appName,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 1.dp)
+                            .fillMaxSize()
+                            .padding(1.dp)
                     )
-                }
-
-                // Timestamp & Dismiss
-                Column(horizontalAlignment = Alignment.End) {
-                    Text(
-                        text = dateFormat.format(Date(group.latestTimestamp)),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(modifier = Modifier.height(2.dp))
-                    IconButton(
-                        onClick = onDismissGroup,
-                        modifier = Modifier.size(24.dp)
-                    ) {
-                        Icon(
-                            Icons.Default.Close,
-                            contentDescription = "Dismiss conversation",
-                            modifier = Modifier.size(16.dp),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
                 }
             }
 
-            HorizontalDivider(
-                modifier = Modifier.padding(vertical = 2.dp),
-                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f)
-            )
-
-            // Conversation Messages Area (Chat Bubbles)
-            if (group.notifications.size <= 1) {
-                GoogleMessageBubble(
-                    notification = latest,
-                    groupTitle = groupTitle
-                )
-            } else {
-                if (!isExpanded) {
-                    // Show latest message
-                    GoogleMessageBubble(
-                        notification = latest,
-                        groupTitle = groupTitle
-                    )
-                }
-
-                AnimatedVisibility(visible = isExpanded) {
-                    Column(
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        chronologicalMessages.forEach { notif ->
-                            GoogleMessageBubble(
-                                notification = notif,
-                                groupTitle = groupTitle
-                            )
-                        }
-                    }
-                }
-
-                // Expand / Collapse Thread Button
+            // Middle: Name, VIP badge, App Name, and Recent Message Preview
+            Column(modifier = Modifier.weight(1f)) {
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.Center
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    Surface(
-                        shape = CircleShape,
-                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                        modifier = Modifier
-                            .clip(CircleShape)
-                            .clickable { isExpanded = !isExpanded }
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    Text(
+                        text = groupTitle,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    if (group.contact != null) {
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer
                         ) {
-                            Icon(
-                                imageVector = if (isExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                                contentDescription = null,
-                                modifier = Modifier.size(15.dp),
-                                tint = MaterialTheme.colorScheme.primary
-                            )
                             Text(
-                                text = if (isExpanded) "Show less" else "View all ${group.notifications.size} messages",
+                                text = "VIP",
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
                             )
                         }
                     }
                 }
-            }
 
-            // Smart Replies Section
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 4.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+                Text(
+                    text = appName,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 1.dp)
+                )
+
+                if (recentMessagePreview.isNotBlank()) {
                     Text(
-                        text = "Smart Replies",
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-
-                    IconButton(
-                        onClick = onRegenerateReplies,
-                        enabled = !isLoadingReplies,
-                        modifier = Modifier.size(22.dp)
-                    ) {
-                        if (isLoadingReplies) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(12.dp),
-                                strokeWidth = 2.dp,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                        } else {
-                            Icon(
-                                Icons.Default.Refresh,
-                                contentDescription = "Regenerate Replies",
-                                modifier = Modifier.size(14.dp),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                }
-
-                // Suggestion Chips (Shiny Google Gemini Style)
-                val shinyBorderBrush = remember {
-                    Brush.horizontalGradient(
-                        colors = listOf(
-                            Color(0xFF4285F4).copy(alpha = 0.70f),
-                            Color(0xFF8AB4F8).copy(alpha = 0.90f),
-                            Color(0xFFC58AF9).copy(alpha = 0.75f),
-                            Color(0xFF4285F4).copy(alpha = 0.70f)
-                        )
-                    )
-                }
-                val shinyBackgroundBrush = remember(MaterialTheme.colorScheme) {
-                    Brush.linearGradient(
-                        colors = listOf(
-                            Color(0xFF0B57D0).copy(alpha = 0.10f),
-                            Color(0xFF8AB4F8).copy(alpha = 0.18f),
-                            Color(0xFFC58AF9).copy(alpha = 0.10f)
-                        )
-                    )
-                }
-
-                if (isLoadingReplies) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier.padding(vertical = 4.dp)
-                    ) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(12.dp),
-                            strokeWidth = 2.dp,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        Text(
-                            text = "Generating replies...",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                } else if (smartReplies.isNotEmpty()) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        smartReplies.forEach { replyText ->
-                            Box(
-                                modifier = Modifier
-                                    .clip(CircleShape)
-                                    .background(shinyBackgroundBrush)
-                                    .border(
-                                        width = 1.2.dp,
-                                        brush = shinyBorderBrush,
-                                        shape = CircleShape
-                                    )
-                                    .clickable { manualReplyText = replyText }
-                                    .padding(horizontal = 14.dp, vertical = 7.dp)
-                            ) {
-                                Text(
-                                    text = replyText,
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                            }
-                        }
-
-                        // Extra Regenerate Pill in Chip Row
-                        Surface(
-                            shape = CircleShape,
-                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                            border = androidx.compose.foundation.BorderStroke(
-                                1.dp,
-                                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
-                            ),
-                            modifier = Modifier
-                                .clip(CircleShape)
-                                .clickable { onRegenerateReplies() }
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                Icon(
-                                    Icons.Default.Refresh,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(12.dp),
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Text(
-                                    text = "More",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                    }
-                } else {
-                    OutlinedButton(
-                        onClick = onRegenerateReplies,
-                        shape = CircleShape,
-                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 4.dp),
+                        text = recentMessagePreview,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.padding(top = 2.dp)
-                    ) {
-                        Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(14.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Generate Replies", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
-                    }
+                    )
                 }
             }
 
-            // Google Pill Reply Composer
-            Surface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(48.dp),
-                shape = CircleShape,
-                color = MaterialTheme.colorScheme.surfaceContainerHigh
+            // Right Column: Timestamp + Dismiss Button
+            Column(
+                horizontalAlignment = Alignment.End,
+                verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(start = 14.dp, end = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                Text(
+                    text = formattedDate,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                IconButton(
+                    onClick = onDismissGroup,
+                    modifier = Modifier.size(24.dp)
                 ) {
                     Icon(
-                        Icons.Default.Edit,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(17.dp)
+                        Icons.Default.Close,
+                        contentDescription = "Dismiss conversation",
+                        modifier = Modifier.size(16.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-
-                    Box(
-                        modifier = Modifier.weight(1f),
-                        contentAlignment = Alignment.CenterStart
-                    ) {
-                        if (manualReplyText.isEmpty()) {
-                            Text(
-                                text = "Reply to $groupTitle...",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        BasicTextField(
-                            value = manualReplyText,
-                            onValueChange = { manualReplyText = it },
-                            singleLine = true,
-                            textStyle = MaterialTheme.typography.bodyMedium.copy(
-                                color = MaterialTheme.colorScheme.onSurface
-                            ),
-                            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                            keyboardActions = KeyboardActions(
-                                onSend = {
-                                    if (manualReplyText.isNotBlank()) {
-                                        onSendReply(manualReplyText.trim())
-                                        manualReplyText = ""
-                                    }
-                                }
-                            ),
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    }
-
-                    if (manualReplyText.isNotEmpty()) {
-                        IconButton(
-                            onClick = { manualReplyText = "" },
-                            modifier = Modifier.size(24.dp)
-                        ) {
-                            Icon(
-                                Icons.Default.Clear,
-                                contentDescription = "Clear",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(15.dp)
-                            )
-                        }
-                    }
-
-                    // Send Button
-                    IconButton(
-                        onClick = {
-                            if (manualReplyText.isNotBlank()) {
-                                onSendReply(manualReplyText.trim())
-                                manualReplyText = ""
-                            }
-                        },
-                        enabled = manualReplyText.isNotBlank(),
-                        modifier = Modifier.size(36.dp),
-                        colors = IconButtonDefaults.iconButtonColors(
-                            containerColor = if (manualReplyText.isNotBlank()) MaterialTheme.colorScheme.primary else Color.Transparent,
-                            contentColor = if (manualReplyText.isNotBlank()) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.outlineVariant
-                        )
-                    ) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.Send,
-                            contentDescription = "Send",
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
                 }
-            }
-
-            if (!group.canReply) {
-                Text(
-                    text = "Tip: Notification dismissed. Sending will copy & open app.",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.outline,
-                    modifier = Modifier.padding(start = 6.dp)
-                )
             }
         }
     }
@@ -995,12 +581,17 @@ fun GoogleM3ConversationCard(
 
 @Composable
 fun GoogleMessageBubble(
-    notification: NotificationEntity,
+    message: ChatMessage,
     groupTitle: String
 ) {
     val timeFormat = remember { SimpleDateFormat("h:mm a", Locale.getDefault()) }
-    val isFromYou = notification.title.equals("You", ignoreCase = true) ||
-                    notification.text?.startsWith("Replied you using", ignoreCase = true) == true
+    val formattedTime = remember(message.timestamp) {
+        timeFormat.format(Date(message.timestamp))
+    }
+    val isFromYou = message.isFromYou
+    val isGroupMember = !isFromYou && message.senderName.isNotBlank() &&
+                        !message.senderName.equals(groupTitle, ignoreCase = true) &&
+                        !message.senderName.equals("You", ignoreCase = true)
 
     val bubbleShape = if (isFromYou) {
         RoundedCornerShape(topStart = 16.dp, topEnd = 4.dp, bottomEnd = 16.dp, bottomStart = 16.dp)
@@ -1046,10 +637,18 @@ fun GoogleMessageBubble(
                         color = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.padding(bottom = 2.dp)
                     )
+                } else if (isGroupMember) {
+                    Text(
+                        text = message.senderName,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.85f),
+                        modifier = Modifier.padding(bottom = 2.dp)
+                    )
                 }
 
                 Text(
-                    text = notification.text ?: "No Content",
+                    text = message.bodyText.ifEmpty { "No Content" },
                     style = MaterialTheme.typography.bodyMedium,
                     color = textColor
                 )
@@ -1061,7 +660,7 @@ fun GoogleMessageBubble(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = timeFormat.format(Date(notification.timestamp)),
+                        text = formattedTime,
                         style = MaterialTheme.typography.labelSmall,
                         color = subTextColor
                     )

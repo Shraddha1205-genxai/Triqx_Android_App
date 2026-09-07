@@ -49,6 +49,7 @@ class TriqxNotificationListenerService : NotificationListenerService() {
     @Inject lateinit var contactDao: ContactDao
     @Inject lateinit var openAiRepository: OpenAiRepository
     @Inject lateinit var replyActionStore: ReplyActionStore
+    @Inject lateinit var mapperRegistry: com.example.triqx.service.mapper.NotificationMapperRegistry
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val gson = GsonBuilder()
@@ -90,8 +91,8 @@ class TriqxNotificationListenerService : NotificationListenerService() {
 
                     if (isImportant || isContact) {
                         extractReplyAction(sbn.notification)?.let { action ->
-                            val tag = sbn.tag ?: extractTagFromKey(sbn.key) ?: title?.trim() ?: "default"
-                            val conversationKey = computeConversationKey(sbn.packageName, tag)
+                            val parsed = mapperRegistry.getMapper(sbn.packageName).parse(sbn, null, null)
+                            val conversationKey = computeConversationKey(sbn.packageName, parsed.chatTag)
                             replyActionStore.put(conversationKey, action)
                             Log.d(TAG, "Indexed reply action for $conversationKey")
                         }
@@ -256,7 +257,7 @@ class TriqxNotificationListenerService : NotificationListenerService() {
         val notification = sbn.notification
         val packageName = sbn.packageName
         val extras = notification.extras
-        val title = extras.getString(Notification.EXTRA_TITLE)
+        val title = extras.getString(Notification.EXTRA_CONVERSATION_TITLE)
         val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()
         val bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()
         val subText = extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString()
@@ -385,27 +386,32 @@ class TriqxNotificationListenerService : NotificationListenerService() {
             }
             val isFromPriorityContact = (matchedContact != null)
 
-            val isEmail = isEmailApp(packageName)
-            val effectiveText = if (isEmail && !bigText.isNullOrBlank()) {
-                if (!text.isNullOrBlank() && bigText.startsWith(text.trim())) {
-                    val body = bigText.substringAfter(text.trim()).trim().removePrefix("\n").trim()
-                    if (body.isNotBlank()) "$text: $body" else bigText
-                } else bigText
-            } else {
-                text ?: bigText
-            }
+            // --- 1. PARSE NOTIFICATION VIA MODULAR APP MAPPER ---
+            val parsed = mapperRegistry.getMapper(packageName).parse(sbn, rawJson, matchedContact)
+            val conversationKey = computeConversationKey(packageName, parsed.chatTag)
 
-            // --- 1. ALWAYS RECORD ALL NOTIFICATIONS IN NotificationDao (FOR DEBUG TAB) ---
-            val existing = notificationDao.getLatestMatching(packageName, title, effectiveText)
+            val isFromYou = parsed.isFromYou
+
+            val senderName = if (isFromYou) {
+                "You"
+            } else if (parsed.individualSender.isNotBlank()) {
+                parsed.individualSender
+            } else {
+                parsed.conversationTitle
+            }
+            val cleanSubText = if (isEmailApp(packageName)) parsed.subText else null
+
+            // --- 2. RECORD CLEAN NOTIFICATION IN NotificationDao (FOR DEBUG TAB & HISTORY) ---
+            val existing = notificationDao.getLatestMatching(packageName, senderName, parsed.bodyText)
             if (existing != null && (timestamp - existing.timestamp < 60 * 60 * 1000L || existing.notificationKey == sbn.key)) {
                 notificationDao.updateTimestampAndJson(existing.id, timestamp, rawJson)
             } else {
                 notificationDao.insertNotification(
                     NotificationEntity(
                         packageName = packageName,
-                        title = title,
-                        text = effectiveText,
-                        senderEmail = senderEmail,
+                        title = senderName,
+                        text = parsed.bodyText,
+                        senderEmail = cleanSubText ?: (if (isEmailApp(packageName)) senderEmail else null),
                         contactLookupUri = contactLookupUri,
                         rawJson = rawJson,
                         notificationKey = sbn.key,
@@ -414,20 +420,10 @@ class TriqxNotificationListenerService : NotificationListenerService() {
                 )
             }
 
-            // --- 2. GUARD: CONVERSATIONS, SMART REPLIES & REPLY ACTIONS ONLY FOR ALLOWED APPS OR VIP CONTACTS ---
+            // --- 3. GUARD: CONVERSATIONS, SMART REPLIES & REPLY ACTIONS ONLY FOR ALLOWED APPS OR VIP CONTACTS ---
             if (!isImportantApp && !isFromPriorityContact) {
                 return@launch
             }
-
-            // --- 3. UNIVERSAL CONVERSATION KEY COMPUTATION ---
-            val chatTag = if (isEmail) {
-                val email = senderEmail?.removePrefix("mailto:")?.trim()
-                if (!email.isNullOrBlank()) "email_$email" else "sender_${title?.trim() ?: "default"}"
-            } else {
-                extractTagFromJson(rawJson) ?: extractTagFromKey(sbn.key) ?: title?.trim() ?: "default"
-            }
-
-            val conversationKey = computeConversationKey(packageName, chatTag)
 
             // --- 4. PERSIST ACTION TO UNIFIED STORE ---
             val extractedReplyAction = extractReplyAction(notification)
@@ -435,76 +431,45 @@ class TriqxNotificationListenerService : NotificationListenerService() {
                 replyActionStore.put(conversationKey, extractedReplyAction)
             }
 
-            // --- 5. RESOLVE GROUP vs 1-ON-1 TITLES AND UPDATE ROOM ---
-            val isFromYou = title.equals("You", ignoreCase = true) || effectiveText?.startsWith("Replied you using", ignoreCase = true) == true
-            val isGroup = chatTag.endsWith("@g.us") || extras.getBoolean(Notification.EXTRA_IS_GROUP_CONVERSATION, false)
-            val conversationTitleExtra = extras.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE)?.toString()?.trim()
+            // --- 5. UPDATE CONVERSATION ENTITY IN ROOM ---
+            if (!isFromYou) {
+                val currentConversation = conversationDao.getConversationByKey(conversationKey).firstOrNull()
 
-            val conversationTitle = if (isGroup) {
-                // For Group: Conversation Title is the Group Name
-                conversationTitleExtra?.ifBlank { null }
-                    ?: (if (!chatTag.endsWith("@s.whatsapp.net") && !title.isNullOrBlank()) title.trim() else "Group Chat")
-            } else {
-                // For 1-on-1: Conversation Title is the Sender's Name
-                matchedContact?.displayName?.ifBlank { null }
-                    ?: title?.trim()?.ifBlank { null }
-                    ?: packageName
-            }
+                val newChatMessage = ChatMessage(
+                    senderName = senderName,
+                    subText = cleanSubText,
+                    bodyText = parsed.bodyText,
+                    timestamp = timestamp,
+                    isFromYou = isFromYou
+                )
 
-            val currentConversation = conversationDao.getConversationByKey(conversationKey).firstOrNull()
+                val updatedMessages = ((currentConversation?.messages ?: emptyList()) + newChatMessage)
+                    .sortedByDescending { it.timestamp }
+                    .distinctBy { "${it.senderName}_${it.bodyText}_${it.timestamp / 1000}" }
 
-            val individualSenderName = if (isFromYou) {
-                "You"
-            } else if (isGroup) {
-                // In a group, extract individual sender name
-                val messagingPerson = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
-                    @Suppress("DEPRECATION")
-                    extras.getParcelable<Person>(Notification.EXTRA_MESSAGING_PERSON)?.name?.toString()
-                } else null
-
-                messagingPerson?.ifBlank { null }
-                    ?: if (effectiveText != null && effectiveText.contains(":") && !effectiveText.startsWith("http")) {
-                        effectiveText.substringBefore(":").trim()
-                    } else {
-                        title ?: "Member"
-                    }
-            } else {
-                matchedContact?.displayName?.ifBlank { null } ?: title ?: "Unknown"
-            }
-
-            val newChatMessage = ChatMessage(
-                senderName = individualSenderName,
-                subText = if (isGroup) conversationTitle else subText,
-                bodyText = effectiveText ?: "",
-                timestamp = timestamp,
-                isFromYou = isFromYou
-            )
-
-            val updatedMessages = ((currentConversation?.messages ?: emptyList()) + newChatMessage)
-                .sortedByDescending { it.timestamp }
-                .distinctBy { "${it.senderName}_${it.bodyText}_${it.timestamp / 1000}" }
-
-            conversationDao.insertOrUpdate(
-                ConversationEntity(
+                val entityToSave = ConversationEntity(
                     conversationKey = conversationKey,
                     packageName = packageName,
-                    contactId = matchedContact?.id,
-                    title = conversationTitle,
-                    specificIdentifier = senderEmail ?: matchedContact?.primaryPhone,
+                    contactId = matchedContact?.id ?: currentConversation?.contactId,
+                    title = parsed.conversationTitle,
+                    specificIdentifier = senderEmail ?: matchedContact?.primaryPhone ?: currentConversation?.specificIdentifier,
                     messages = updatedMessages,
                     latestTimestamp = timestamp,
                     latestNotificationKey = sbn.key
                 )
-            )
+                conversationDao.insertOrUpdate(entityToSave)
 
-            val chatTitle = conversationTitle
+                Log.i(TAG, "===> [CONVERSATION TABLE UPSERT] key='${entityToSave.conversationKey}', title='${entityToSave.title}', sender='${newChatMessage.senderName}', isFromYou=${newChatMessage.isFromYou}, subText='${newChatMessage.subText}', body='${newChatMessage.bodyText}', totalMsgs=${updatedMessages.size}")
+            }
+
+            val chatTitle = parsed.conversationTitle
 
             // --- 6. TRIGGER ASSISTANT NOTIFICATION ---
-            if ((isImportantApp || isFromPriorityContact) && !isFromYou && !effectiveText.isNullOrBlank()) {
+            if (!isFromYou && parsed.bodyText.isNotBlank()) {
                 val recentList = notificationDao.getRecentNotificationsList(25)
                 val threadMessages = recentList.filter { notif ->
                     if (notif.packageName != packageName) return@filter false
-                    val notifTag = if (isEmail) {
+                    val notifTag = if (isEmailApp(packageName)) {
                         val notifEmail = notif.senderEmail?.removePrefix("mailto:")?.trim()
                         if (!notifEmail.isNullOrBlank()) "email_$notifEmail" else "sender_${notif.title?.trim() ?: "default"}"
                     } else {
@@ -516,9 +481,9 @@ class TriqxNotificationListenerService : NotificationListenerService() {
                 val messagesForAi = if (threadMessages.isNotEmpty()) threadMessages else listOf(
                     NotificationEntity(
                         packageName = packageName,
-                        title = title,
-                        text = effectiveText,
-                        senderEmail = senderEmail,
+                        title = senderName,
+                        text = parsed.bodyText,
+                        senderEmail = cleanSubText ?: (if (isEmailApp(packageName)) senderEmail else null),
                         contactLookupUri = contactLookupUri,
                         rawJson = rawJson,
                         notificationKey = sbn.key,

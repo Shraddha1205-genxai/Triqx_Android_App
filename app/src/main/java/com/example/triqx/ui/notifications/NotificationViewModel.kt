@@ -2,6 +2,7 @@ package com.example.triqx.ui.notifications
 
 import android.content.Context
 import android.provider.Settings
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.triqx.data.local.AppDao
@@ -28,19 +29,19 @@ import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 /**
- * A conversation group card shown on the Home screen.
- * Groups notifications by universal conversationKey (packageName + chatTag).
+ * A conversation card shown on the Home screen.
+ * Backed by ConversationEntity from the conversations table.
  */
-data class ClubbedNotificationGroup(
-    val groupKey: String,
-    val title: String,                           // Clean computed title (Group Name or Sender Name, never "You")
-    val contact: ContactEntity?,
-    val specificIdentifier: String?,
-    val packageName: String,
-    val notifications: List<NotificationEntity>, // Sorted newest first, deduplicated
-    val latestTimestamp: Long,
-    val canReply: Boolean,
-    val latestNotificationKey: String
+data class Conversation(
+    val groupKey: String,                        // conversationKey
+    val title: String,                           // Clean display title (Group Name or Sender Name)
+    val contact: ContactEntity?,                 // Resolved from contactId
+    val specificIdentifier: String?,             // Email address or phone number
+    val packageName: String,                     // Source app package
+    val messages: List<ChatMessage>,             // Conversation messages (newest first)
+    val latestTimestamp: Long,                   // Timestamp of the latest message
+    val canReply: Boolean,                       // Whether RemoteInput reply is available
+    val latestNotificationKey: String            // Android notification key for reply/dismiss
 )
 
 @HiltViewModel
@@ -89,166 +90,75 @@ class NotificationViewModel @Inject constructor(
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     // =============================
-    // Grouped Priority Notifications (Conversation Cards)
+    // Grouped Priority Conversations (Conversation Cards from conversations table)
     // =============================
 
-    val groupedPriorityNotifications: StateFlow<List<ClubbedNotificationGroup>> = combine(
-        notificationDao.getAllNotifications(),
-        contactDao.getAllContacts(),
-        appDao.getAllImportantApps()
-    ) { notifications, contacts, apps ->
-        buildConversationGroups(notifications, contacts, apps)
+    val groupedPriorityNotifications: StateFlow<List<Conversation>> = combine(
+        conversationDao.getAllConversations(),
+        contactDao.getAllContacts()
+    ) { conversations, contacts ->
+        buildConversationCards(conversations, contacts)
     }
     .flowOn(Dispatchers.Default)
     .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    /**
-     * Build conversation cards from raw notifications.
-     * 3-pass pipeline: Group incoming -> Attach outgoing -> Deduplicate & sort
-     */
-    private fun buildConversationGroups(
-        notifications: List<NotificationEntity>,
-        contacts: List<ContactEntity>,
-        apps: List<com.example.triqx.data.local.AppEntity>
-    ): List<ClubbedNotificationGroup> {
-
-        val importantPackages = apps.map { it.packageName }.toSet()
-
-        val incoming = notifications.filter { !it.title.equals("You", ignoreCase = true) }
-        val outgoing = notifications.filter { it.title.equals("You", ignoreCase = true) }
-
-        val rawGroups = mutableMapOf<String, MutableList<NotificationEntity>>()
-        val groupContactMap = mutableMapOf<String, ContactEntity?>()
-        val groupPackageMap = mutableMapOf<String, String>()
-        val groupIdentifierMap = mutableMapOf<String, String?>()
-
-        // --- PASS 1: Group incoming messages ---
-        for (notif in incoming) {
-            val isImportantApp = importantPackages.contains(notif.packageName)
-            val matchedContact = contacts.find { isNotificationFromContact(notif, it) }
-
-            if (!isImportantApp && matchedContact == null) continue
-
-            val chatTag = extractChatTag(notif) ?: notif.title?.trim() ?: "default"
-            val groupKey = buildGroupKey(notif.packageName, chatTag)
-
-            if (!rawGroups.containsKey(groupKey)) {
-                rawGroups[groupKey] = mutableListOf()
-                groupContactMap[groupKey] = matchedContact
-                groupPackageMap[groupKey] = notif.packageName
-                groupIdentifierMap[groupKey] = notif.senderEmail
-                    ?: matchedContact?.primaryEmail
-                    ?: matchedContact?.primaryPhone
-                    ?: matchedContact?.displayName
-                    ?: notif.title
-            }
-            rawGroups[groupKey]?.add(notif)
-        }
-
-        // --- PASS 2: Attach outgoing "You" replies to their conversation ---
-        for (notif in outgoing) {
-            val contactId = extractContactIdFromJson(notif.rawJson)
-            val matchedContact = if (contactId != null) {
-                contacts.find { it.id == contactId }
-            } else {
-                contacts.find { isNotificationFromContact(notif, it) }
-            }
-
-            val isImportantApp = importantPackages.contains(notif.packageName)
-            if (!isImportantApp && matchedContact == null) continue
-
-            val chatTag = extractChatTag(notif)
-            val exactKey = if (chatTag != null) buildGroupKey(notif.packageName, chatTag) else null
-
-            val targetKey = exactKey?.takeIf { rawGroups.containsKey(it) }
-                ?: rawGroups.keys.firstOrNull { key ->
-                    val sameContact = matchedContact != null && groupContactMap[key]?.id == matchedContact.id
-                    val samePackage = groupPackageMap[key] == notif.packageName
-                    (sameContact && samePackage) || (matchedContact == null && samePackage)
+    init {
+        viewModelScope.launch {
+            conversationDao.getAllConversations().collect { list ->
+                Log.d("TriqxConversations", "=== [CONVERSATION TABLE DUMP: ${list.size} active threads] ===")
+                list.forEachIndexed { i, c ->
+                    val latestMsg = c.messages.firstOrNull()
+                    Log.d("TriqxConversations", "  #$i key='${c.conversationKey}', title='${c.title}', pkg='${c.packageName}', totalMsgs=${c.messages.size}, latest=[${latestMsg?.senderName}]: '${latestMsg?.bodyText}'")
                 }
-
-            if (targetKey != null) {
-                rawGroups[targetKey]?.add(notif)
             }
         }
 
-        // --- PASS 3: Deduplicate, sort, and build final groups ---
-        return rawGroups.mapNotNull { (groupKey, notifList) ->
-            buildSingleGroup(
-                groupKey,
-                notifList,
-                groupContactMap[groupKey],
-                groupPackageMap[groupKey] ?: notifList.first().packageName,
-                groupIdentifierMap[groupKey]
+        viewModelScope.launch(Dispatchers.Default) {
+            groupedPriorityNotifications.collect { conversations ->
+                conversations.forEach { conv ->
+                    val latestMsg = conv.messages.firstOrNull()
+                    if (latestMsg != null && !latestMsg.isFromYou && latestMsg.bodyText.isNotBlank()) {
+                        openAiRepository.generateRepliesIfNeeded(conv.groupKey, conv.title, conv.messages)
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Build conversation cards directly from the conversations table.
+     * ConversationEntity already contains pre-grouped, deduplicated ChatMessage lists.
+     */
+    private fun buildConversationCards(
+        conversations: List<ConversationEntity>,
+        contacts: List<ContactEntity>
+    ): List<Conversation> {
+        val contactsMap = contacts.associateBy { it.id }
+        return conversations.mapNotNull { entity ->
+            // Skip conversations with no messages
+            if (entity.messages.isEmpty()) return@mapNotNull null
+
+            // Resolve contact from contactId in O(1) time
+            val contact = entity.contactId?.let { id -> contactsMap[id] }
+
+            val canReplyAny = canReply(entity.conversationKey, entity.latestNotificationKey)
+
+            Conversation(
+                groupKey = entity.conversationKey,
+                title = entity.title,
+                contact = contact,
+                specificIdentifier = entity.specificIdentifier,
+                packageName = entity.packageName,
+                messages = entity.messages,
+                latestTimestamp = entity.latestTimestamp,
+                canReply = canReplyAny,
+                latestNotificationKey = entity.latestNotificationKey ?: ""
             )
         }.sortedByDescending { it.latestTimestamp }
     }
 
-    /** Build a single ClubbedNotificationGroup from a list of notifications. */
-    private fun buildSingleGroup(
-        groupKey: String,
-        notifList: List<NotificationEntity>,
-        contact: ContactEntity?,
-        pkg: String,
-        identifier: String?
-    ): ClubbedNotificationGroup? {
-        if (notifList.isEmpty()) return null
-
-        val sorted = notifList.sortedByDescending { it.timestamp }
-
-        // Remove duplicate messages (same sender + same text within 2 hours)
-        val deduped = mutableListOf<NotificationEntity>()
-        for (notif in sorted) {
-            val isDupe = deduped.any { existing ->
-                val sameSender = existing.title?.trim().equals(notif.title?.trim(), ignoreCase = true)
-                val sameText = existing.text?.trim().equals(notif.text?.trim(), ignoreCase = true)
-                val closeInTime = kotlin.math.abs(existing.timestamp - notif.timestamp) < 2 * 60 * 60 * 1000L
-                val isYouDupe = sameSender && sameText && notif.title.equals("You", ignoreCase = true)
-                (sameSender && sameText && closeInTime) || isYouDupe
-            }
-            if (!isDupe) deduped.add(notif)
-        }
-
-        if (deduped.isEmpty()) return null
-
-        // Skip phantom cards that only have outgoing replies (no incoming messages)
-        if (deduped.none { !it.title.equals("You", ignoreCase = true) }) return null
-
-        val latest = deduped.first()
-        val latestIncoming = deduped.firstOrNull { !it.title.equals("You", ignoreCase = true) } ?: latest
-
-        // Resolve conversation title directly here during grouping (never "You")
-        val conversationTitle = contact?.displayName?.ifBlank { null }
-            ?: latestIncoming.title?.takeIf { !it.equals("You", ignoreCase = true) }
-            ?: identifier
-            ?: pkg
-
-        val canReplyAny = canReply(groupKey, latest.notificationKey)
-        val replyableKey = deduped.firstOrNull { canReply(groupKey, it.notificationKey) }
-            ?.notificationKey ?: latest.notificationKey
-
-        // Trigger AI reply generation if latest message is incoming
-        val isLatestFromYou = latest.title.equals("You", ignoreCase = true)
-            || latest.text?.startsWith("Replied you using", ignoreCase = true) == true
-        if (!isLatestFromYou && !latest.text.isNullOrBlank()) {
-            openAiRepository.generateRepliesIfNeeded(groupKey, conversationTitle, deduped)
-        }
-
-        return ClubbedNotificationGroup(
-            groupKey = groupKey,
-            title = conversationTitle,
-            contact = contact,
-            specificIdentifier = identifier,
-            packageName = pkg,
-            notifications = deduped,
-            latestTimestamp = latest.timestamp,
-            canReply = canReplyAny,
-            latestNotificationKey = replyableKey
-        )
-    }
-
     // =============================
-    // Chat Tag & Contact Matching
+    // Chat Tag & Contact Matching (kept for filteredNotifications / Debug tab)
     // =============================
 
     private fun extractChatTag(notification: NotificationEntity): String? {
@@ -404,6 +314,8 @@ class NotificationViewModel @Inject constructor(
                         latestNotificationKey = notificationKey
                     )
                 )
+
+                Log.i("TriqxReply", "===> [CONVERSATION TABLE OUTGOING] key='$groupKey', title='$cleanTitle', replyText='$replyText', totalMsgs=${updatedMessages.size}")
             }
         }
     }
@@ -423,10 +335,13 @@ class NotificationViewModel @Inject constructor(
         }
     }
 
-    fun dismissGroup(group: ClubbedNotificationGroup) {
+    fun dismissGroup(group: Conversation) {
         viewModelScope.launch(Dispatchers.IO) {
-            TriqxNotificationListenerService.instance?.dismissNotifications(group.notifications.map { it.notificationKey })
-            notificationDao.deleteNotificationsByIds(group.notifications.map { it.id })
+            // Dismiss the Android notification
+            if (group.latestNotificationKey.isNotBlank()) {
+                TriqxNotificationListenerService.instance?.dismissNotification(group.latestNotificationKey)
+            }
+            // Delete conversation from conversations table
             conversationDao.deleteByKey(group.groupKey)
         }
     }
@@ -434,10 +349,8 @@ class NotificationViewModel @Inject constructor(
     fun clearAllPriorityNotifications() {
         viewModelScope.launch(Dispatchers.IO) {
             val currentGroups = groupedPriorityNotifications.value
-            val allKeys = currentGroups.flatMap { it.notifications.map { n -> n.notificationKey } }
-            val allIds = currentGroups.flatMap { it.notifications.map { n -> n.id } }
-            TriqxNotificationListenerService.instance?.dismissNotifications(allKeys)
-            notificationDao.deleteNotificationsByIds(allIds)
+            val allNotificationKeys = currentGroups.map { it.latestNotificationKey }.filter { it.isNotBlank() }
+            TriqxNotificationListenerService.instance?.dismissNotifications(allNotificationKeys)
             conversationDao.clearAll()
         }
     }
@@ -454,8 +367,8 @@ class NotificationViewModel @Inject constructor(
     // AI Reply Regeneration
     // =============================
 
-    fun regenerateRepliesForGroup(group: ClubbedNotificationGroup) {
-        openAiRepository.regenerateReplies(group.groupKey, group.title, group.notifications)
+    fun regenerateRepliesForGroup(group: Conversation) {
+        openAiRepository.regenerateReplies(group.groupKey, group.title, group.messages)
     }
 
     // =============================

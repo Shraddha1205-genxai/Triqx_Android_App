@@ -135,6 +135,7 @@ object TriqxAssistantNotificationManager {
     // =============================
 
     fun cancelNotification(context: Context, groupKey: String) {
+
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         manager.cancel(getNotificationTag(groupKey), NOTIFICATION_ID)
     }
