@@ -15,6 +15,8 @@ import javax.inject.Inject
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     private val openAiRepository: OpenAiRepository,
+    val emailAccountStore: com.example.triqx.data.local.EmailAccountStore,
+    private val gmailOAuthManager: com.example.triqx.auth.GmailOAuthManager,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
@@ -22,6 +24,11 @@ class SettingsViewModel @Inject constructor(
 
     val apiKey: StateFlow<String> = openAiRepository.apiKey
     val selectedModel: StateFlow<String> = openAiRepository.selectedModel
+    val gmailAccount: StateFlow<com.example.triqx.data.local.EmailAccountEntity?> = emailAccountStore.gmailAccount
+    val connectedAccounts: StateFlow<List<com.example.triqx.data.local.EmailAccountEntity>> = emailAccountStore.connectedAccounts
+
+    private val _authStatus = MutableStateFlow<String?>(null)
+    val authStatus: StateFlow<String?> = _authStatus.asStateFlow()
 
     private val _showDebugMenu = MutableStateFlow(prefs.getBoolean("show_debug_menu", false))
     val showDebugMenu: StateFlow<Boolean> = _showDebugMenu.asStateFlow()
@@ -66,5 +73,56 @@ class SettingsViewModel @Inject constructor(
             }
             _isTesting.value = false
         }
+    }
+
+    fun prepareGoogleAuthIntent(onReady: (android.content.Intent) -> Unit, onError: (() -> Unit)? = null) {
+        viewModelScope.launch {
+            try {
+                val intent = gmailOAuthManager.createAuthorizationIntent()
+                onReady(intent)
+            } catch (e: Exception) {
+                _authStatus.value = "Error: ${e.message ?: "Failed to initialize Google Sign-In"}"
+                onError?.invoke()
+            }
+        }
+    }
+
+    suspend fun getGoogleAuthIntent(): android.content.Intent {
+        return gmailOAuthManager.createAuthorizationIntent()
+    }
+
+    fun handleGoogleAuthResult(resultIntent: android.content.Intent) {
+        viewModelScope.launch {
+            _authStatus.value = "Connecting to Google..."
+            val result = gmailOAuthManager.handleAuthorizationResult(resultIntent)
+            result.onSuccess { account ->
+                val namePart = if (!account.displayName.isNullOrBlank()) "${account.displayName} (${account.emailAddress})" else account.emailAddress
+                _authStatus.value = "Connected: $namePart"
+            }.onFailure { ex ->
+                _authStatus.value = "Error: ${ex.message ?: "Authentication failed"}"
+            }
+        }
+    }
+
+    fun updateDisplayName(name: String) {
+        emailAccountStore.updateDisplayName(name)
+    }
+
+    fun updateDisplayName(emailAddress: String, name: String) {
+        emailAccountStore.updateDisplayName(emailAddress, name)
+    }
+
+    fun disconnectAccount(emailAddress: String) {
+        gmailOAuthManager.disconnectAccount(emailAddress)
+        _authStatus.value = null
+    }
+
+    fun disconnectGmail() {
+        gmailOAuthManager.disconnectGmail()
+        _authStatus.value = null
+    }
+
+    fun clearAuthStatus() {
+        _authStatus.value = null
     }
 }

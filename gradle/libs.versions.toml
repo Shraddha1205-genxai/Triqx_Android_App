@@ -17,6 +17,11 @@ room = "2.8.4"
 coil = "2.7.0"
 gson = "2.14.0"
 okhttp = "4.12.0"
+appauth = "0.11.1"
+securityCrypto = "1.1.0-alpha06"
+playServicesAuth = "21.3.0"
+
+
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -45,6 +50,11 @@ room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = "room" }
 coil-compose = { group = "io.coil-kt", name = "coil-compose", version.ref = "coil" }
 gson = { group = "com.google.code.gson", name = "gson", version.ref = "gson" }
 okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
+appauth = { group = "net.openid", name = "appauth", version.ref = "appauth" }
+androidx-security-crypto = { group = "androidx.security", name = "security-crypto", version.ref = "securityCrypto" }
+play-services-auth = { group = "com.google.android.gms", name = "play-services-auth", version.ref = "playServicesAuth" }
+
+
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

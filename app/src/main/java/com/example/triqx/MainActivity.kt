@@ -42,11 +42,15 @@ import com.example.triqx.ui.notifications.NotificationViewModel
 import com.example.triqx.ui.settings.SettingsScreen
 import com.example.triqx.ui.settings.SettingsViewModel
 import com.example.triqx.ui.theme.TriqxTheme
+import androidx.lifecycle.lifecycleScope
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
+import javax.inject.Inject
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
+
+    @Inject lateinit var gmailOAuthManager: com.example.triqx.auth.GmailOAuthManager
 
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -65,6 +69,9 @@ class MainActivity : ComponentActivity() {
                 notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
             }
         }
+
+        handleOAuthRedirect(intent)
+
         setContent {
             TriqxTheme {
                 val navController = rememberNavController()
@@ -162,7 +169,8 @@ class MainActivity : ComponentActivity() {
                                     if (contactId != null) {
                                         navController.navigate("contact_details/$contactId")
                                     }
-                                }
+                                },
+                                onNavigateToSettings = { navController.navigate("settings") }
                             )
                         }
                         composable("contacts") {
@@ -201,7 +209,7 @@ class MainActivity : ComponentActivity() {
                             )
                         }
                         composable("settings") {
-                            SettingsScreen(viewModel = hiltViewModel())
+                            SettingsScreen(viewModel = settingsViewModel)
                         }
                         composable(
                             route = "notification_details/{notificationId}",
@@ -233,6 +241,21 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleOAuthRedirect(intent)
+    }
+
+    private fun handleOAuthRedirect(intent: Intent?) {
+        val uri = intent?.data ?: return
+        if (uri.scheme.equals("com.example.triqx", ignoreCase = true)) {
+            lifecycleScope.launch {
+                gmailOAuthManager.handleAuthorizationResult(intent)
             }
         }
     }

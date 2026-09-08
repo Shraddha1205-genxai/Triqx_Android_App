@@ -49,6 +49,7 @@ import com.example.triqx.data.local.ChatMessage
 import com.example.triqx.ui.components.AppIcon
 import com.example.triqx.ui.notifications.Conversation
 import com.example.triqx.ui.notifications.NotificationViewModel
+import com.example.triqx.utils.EmailUtils
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -58,7 +59,8 @@ fun ChatScreen(
     groupKey: String,
     viewModel: NotificationViewModel,
     onNavigateBack: () -> Unit,
-    onViewContact: (String) -> Unit
+    onViewContact: (String) -> Unit,
+    onNavigateToSettings: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
@@ -73,6 +75,8 @@ fun ChatScreen(
 
     var manualReplyText by rememberSaveable(stateSaver = TextFieldValue.Saver) { mutableStateOf(TextFieldValue("")) }
     var showDismissDialog by remember { mutableStateOf(false) }
+    var showNotConnectedDialog by remember { mutableStateOf(false) }
+    var pendingUnconnectedReplyText by remember { mutableStateOf("") }
 
     val listState = rememberLazyListState()
 
@@ -132,8 +136,20 @@ fun ChatScreen(
                                         style = MaterialTheme.typography.titleMedium,
                                         fontWeight = FontWeight.Bold,
                                         maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f, fill = false)
                                     )
+
+                                    val senderEmail = EmailUtils.cleanEmail(conversation.senderIdentifier)
+                                    if (!senderEmail.isNullOrBlank() && !senderEmail.equals(conversation.title, ignoreCase = true)) {
+                                        Text(
+                                            text = "($senderEmail)",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
 
                                     if (conversation.contact != null) {
                                         Surface(
@@ -145,7 +161,7 @@ fun ChatScreen(
                                                 style = MaterialTheme.typography.labelSmall,
                                                 fontWeight = FontWeight.Bold,
                                                 color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
                                             )
                                         }
                                     }
@@ -156,16 +172,27 @@ fun ChatScreen(
                                         conversation.packageName.contains("whatsapp", ignoreCase = true) -> "WhatsApp"
                                         conversation.packageName.contains("messaging", ignoreCase = true) || conversation.packageName.contains("mms", ignoreCase = true) -> "Messages"
                                         conversation.packageName.contains("gm", ignoreCase = true) || conversation.packageName.contains("gmail", ignoreCase = true) -> "Gmail"
+                                        conversation.packageName.contains("outlook", ignoreCase = true) -> "Outlook"
                                         conversation.packageName.contains("slack", ignoreCase = true) -> "Slack"
                                         conversation.packageName.contains("telegram", ignoreCase = true) -> "Telegram"
                                         else -> conversation.packageName.substringAfterLast('.').replaceFirstChar { it.uppercase() }
                                     }
                                 }
 
+                                val subject = remember(conversation.messages) {
+                                    conversation.messages.firstOrNull { !it.subText.isNullOrBlank() }?.subText
+                                }
+
+                                val cleanReceiver = EmailUtils.cleanEmail(conversation.receiverIdentifier)
+                                val appWithAccount = if (!cleanReceiver.isNullOrBlank()) "$appName • $cleanReceiver" else appName
+                                val fullSubtitle = if (!subject.isNullOrBlank()) "$appWithAccount • $subject" else appWithAccount
+
                                 Text(
-                                    text = appName,
+                                    text = fullSubtitle,
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             }
                         }
@@ -417,7 +444,11 @@ fun ChatScreen(
                                         context = context,
                                         clipboardManager = clipboardManager,
                                         conversation = conversation,
-                                        replyText = manualReplyText.text.trim()
+                                        replyText = manualReplyText.text.trim(),
+                                        onUnconnectedEmail = { reply ->
+                                            pendingUnconnectedReplyText = reply
+                                            showNotConnectedDialog = true
+                                        }
                                     )
                                     manualReplyText = TextFieldValue("")
                                 }
@@ -466,6 +497,68 @@ fun ChatScreen(
             }
         )
     }
+
+    if (showNotConnectedDialog) {
+        val accountDisplay = EmailUtils.cleanEmail(conversation?.receiverIdentifier)?.ifBlank { null } ?: "Email"
+        AlertDialog(
+            onDismissRequest = { showNotConnectedDialog = false },
+            title = {
+                Text("Account Not Connected", fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Text(
+                    text = "Account '$accountDisplay' is not connected. Connect your Google account in Settings for 1-stage AI replies, or copy the reply and open the email app.",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showNotConnectedDialog = false
+                        onNavigateToSettings?.invoke()
+                    }
+                ) {
+                    Text("Connect Account")
+                }
+            },
+            dismissButton = {
+                OutlinedButton(
+                    onClick = {
+                        showNotConnectedDialog = false
+                        clipboardManager.setText(AnnotatedString(pendingUnconnectedReplyText))
+                        val cleanEmail = EmailUtils.cleanEmail(conversation?.senderIdentifier)?.removePrefix("mailto:")?.trim()
+                        val titleStr = conversation?.contact?.displayName ?: conversation?.messages?.firstOrNull()?.senderName ?: conversation?.packageName
+                        val subject = if (titleStr?.startsWith("Re:", ignoreCase = true) == true) titleStr else "Re: $titleStr"
+
+                        val emailIntent = Intent(Intent.ACTION_SENDTO).apply {
+                            data = Uri.parse("mailto:${cleanEmail ?: ""}")
+                            if (!cleanEmail.isNullOrBlank()) putExtra(Intent.EXTRA_EMAIL, arrayOf(cleanEmail))
+                            putExtra(Intent.EXTRA_SUBJECT, subject)
+                            putExtra(Intent.EXTRA_TEXT, pendingUnconnectedReplyText)
+                            conversation?.packageName?.let { setPackage(it) }
+                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                        }
+
+                        val sent = try { context.startActivity(emailIntent); true } catch (_: Exception) { false }
+                        if (!sent) {
+                            val launchIntent = conversation?.packageName?.let { context.packageManager.getLaunchIntentForPackage(it) }
+                            if (launchIntent != null) {
+                                launchIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                context.startActivity(launchIntent)
+                                Toast.makeText(context, "Copied reply! Opening app...", Toast.LENGTH_SHORT).show()
+                            } else {
+                                Toast.makeText(context, "Copied reply to clipboard", Toast.LENGTH_SHORT).show()
+                            }
+                        } else {
+                            Toast.makeText(context, "Copied reply! Opening draft...", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                ) {
+                    Text("Copy & Open App")
+                }
+            }
+        )
+    }
 }
 
 private fun sendReply(
@@ -473,14 +566,38 @@ private fun sendReply(
     context: android.content.Context,
     clipboardManager: androidx.compose.ui.platform.ClipboardManager,
     conversation: Conversation,
-    replyText: String
+    replyText: String,
+    onUnconnectedEmail: (String) -> Unit
 ) {
+    val isEmailApp = conversation.packageName.let { pkg ->
+        pkg.contains("gm") || pkg.contains("email") || pkg.contains("outlook") || pkg.contains("mail")
+    }
+
+    if (isEmailApp) {
+        val cleanReceiver = EmailUtils.cleanEmail(conversation.receiverIdentifier)
+        val isConnected = viewModel.isEmailAccountConnected(conversation.packageName, cleanReceiver)
+        if (isConnected) {
+            Toast.makeText(context, "Sending via Gmail...", Toast.LENGTH_SHORT).show()
+            viewModel.sendEmailReply(conversation, replyText) { success, errorMsg ->
+                if (success) {
+                    Toast.makeText(context, "Sent: $replyText", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(context, "Failed: ${errorMsg ?: "Check connection"}", Toast.LENGTH_LONG).show()
+                }
+            }
+            return
+        } else {
+            onUnconnectedEmail(replyText)
+            return
+        }
+    }
+
     val success = viewModel.replyToNotification(
         key = conversation.latestNotificationKey,
         replyMessage = replyText,
         packageName = conversation.packageName,
         contact = conversation.contact,
-        specificIdentifier = conversation.specificIdentifier,
+        senderIdentifier = EmailUtils.cleanEmail(conversation.senderIdentifier) ?: conversation.senderIdentifier,
         groupKey = conversation.groupKey
     )
 
@@ -492,16 +609,13 @@ private fun sendReply(
             replyText = replyText,
             notificationKey = conversation.latestNotificationKey,
             contact = conversation.contact,
-            specificIdentifier = conversation.specificIdentifier,
+            senderIdentifier = EmailUtils.cleanEmail(conversation.senderIdentifier) ?: conversation.senderIdentifier,
+            receiverIdentifier = EmailUtils.cleanEmail(conversation.receiverIdentifier) ?: conversation.receiverIdentifier,
             groupKey = conversation.groupKey
         )
 
-        val isEmailApp = conversation.packageName.let { pkg ->
-            pkg.contains("gm") || pkg.contains("email") || pkg.contains("outlook") || pkg.contains("mail")
-        }
-
         val dispatched = if (isEmailApp) {
-            val cleanEmail = conversation.specificIdentifier?.removePrefix("mailto:")?.trim()
+            val cleanEmail = EmailUtils.cleanEmail(conversation.senderIdentifier)?.removePrefix("mailto:")?.trim()
             val titleStr = conversation.contact?.displayName ?: conversation.messages.firstOrNull()?.senderName ?: conversation.packageName
             val subject = if (titleStr.startsWith("Re:", ignoreCase = true)) titleStr else "Re: $titleStr"
 

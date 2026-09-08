@@ -16,6 +16,7 @@ import com.example.triqx.data.local.NotificationDao
 import com.example.triqx.data.local.NotificationEntity
 import com.example.triqx.service.TriqxAssistantNotificationManager
 import com.example.triqx.service.TriqxNotificationListenerService
+import com.example.triqx.utils.EmailUtils
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -45,7 +46,9 @@ class TriqxReplyReceiver : BroadcastReceiver() {
         const val EXTRA_PACKAGE_NAME = "extra_package_name"
         const val EXTRA_NOTIFICATION_KEY = "extra_notification_key"
         const val EXTRA_CONTACT_ID = "extra_contact_id"
-        const val EXTRA_SPECIFIC_IDENTIFIER = "extra_specific_identifier"
+        const val EXTRA_SENDER_IDENTIFIER = "extra_sender_identifier"
+        const val EXTRA_RECEIVER_IDENTIFIER = "extra_receiver_identifier"
+        const val EXTRA_SPECIFIC_IDENTIFIER = "extra_specific_identifier" // backward compat
         const val EXTRA_CONTACT_OR_TITLE = "extra_contact_or_title"
 
         // RemoteInput key for custom/edited replies
@@ -55,6 +58,8 @@ class TriqxReplyReceiver : BroadcastReceiver() {
     @Inject lateinit var notificationDao: NotificationDao
     @Inject lateinit var conversationDao: ConversationDao
     @Inject lateinit var contactDao: ContactDao
+    @Inject lateinit var emailReplyDispatcher: com.example.triqx.service.EmailReplyDispatcher
+    @Inject lateinit var emailAccountStore: com.example.triqx.data.local.EmailAccountStore
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -63,7 +68,9 @@ class TriqxReplyReceiver : BroadcastReceiver() {
         val packageName = intent.getStringExtra(EXTRA_PACKAGE_NAME) ?: "com.triqx"
         val notificationKey = intent.getStringExtra(EXTRA_NOTIFICATION_KEY) ?: ""
         val contactId = intent.getIntExtra(EXTRA_CONTACT_ID, -1).takeIf { it != -1 }
-        val specificIdentifier = intent.getStringExtra(EXTRA_SPECIFIC_IDENTIFIER)
+        val senderIdentifier = intent.getStringExtra(EXTRA_SENDER_IDENTIFIER)
+            ?: intent.getStringExtra(EXTRA_SPECIFIC_IDENTIFIER)
+        val receiverIdentifier = intent.getStringExtra(EXTRA_RECEIVER_IDENTIFIER)
         val contactOrTitle = intent.getStringExtra(EXTRA_CONTACT_OR_TITLE) ?: ""
 
         val replyText = when (intent.action) {
@@ -87,21 +94,51 @@ class TriqxReplyReceiver : BroadcastReceiver() {
                 // 1. Dismiss assistant notification immediately
                 TriqxAssistantNotificationManager.cancelNotification(context, groupKey)
 
-                // 2. Dispatch reply via unified ReplyActionStore (1-Stage)
-                val sent = TriqxNotificationListenerService.instance?.sendReply(
-                    conversationKey = groupKey,
-                    message = replyText,
-                    notificationKey = notificationKey
-                ) == true
+                // 2. Dispatch reply: first try EmailReplyDispatcher if it's an email app with connected account
+                var sent = false
+                val currentConv = conversationDao.getConversationByKey(groupKey).firstOrNull()
+                val targetReceiver = EmailUtils.cleanEmail(receiverIdentifier) ?: EmailUtils.cleanEmail(currentConv?.receiverIdentifier)
+
+                if (isEmailApp(packageName) && emailReplyDispatcher.canReply(packageName, targetReceiver)) {
+                    val contact = contactId?.let { contactDao.getContactById(it).first() }
+                    val rawSender = senderIdentifier ?: currentConv?.senderIdentifier ?: contact?.primaryEmail
+                    val cleanEmail = EmailUtils.cleanEmail(rawSender)?.removePrefix("mailto:")?.trim()
+                    val subject = currentConv?.messages?.firstOrNull { !it.subText.isNullOrBlank() }?.subText ?: contactOrTitle
+
+                    if (!cleanEmail.isNullOrBlank()) {
+                        val apiResult = emailReplyDispatcher.sendReply(
+                            recipientEmail = cleanEmail,
+                            subject = subject,
+                            replyText = replyText,
+                            packageName = packageName,
+                            accountEmail = targetReceiver
+                        )
+                        sent = apiResult.isSuccess
+                        if (sent) {
+                            Log.i(TAG, "Reply sent successfully via Gmail API to $cleanEmail from $targetReceiver ($groupKey)")
+                        } else {
+                            Log.w(TAG, "Gmail API reply failed: ${apiResult.exceptionOrNull()?.message}")
+                        }
+                    }
+                }
+
+                // If not sent via email API, try standard RemoteInput
+                if (!sent) {
+                    sent = TriqxNotificationListenerService.instance?.sendReply(
+                        conversationKey = groupKey,
+                        message = replyText,
+                        notificationKey = notificationKey
+                    ) == true
+                }
 
                 if (sent) {
-                    Log.i(TAG, "Reply sent successfully via RemoteInput to $packageName ($groupKey)")
+                    Log.i(TAG, "Reply sent successfully for $packageName ($groupKey)")
                 } else {
-                    handleFallback(context, packageName, replyText, contactId, specificIdentifier, contactOrTitle)
+                    handleFallback(context, packageName, replyText, contactId, senderIdentifier, contactOrTitle)
                 }
 
                 // 3. Record outgoing reply in Room database
-                saveOutgoingReply(groupKey, packageName, replyText, notificationKey, contactId, specificIdentifier, contactOrTitle)
+                saveOutgoingReply(groupKey, packageName, replyText, notificationKey, contactId, senderIdentifier, receiverIdentifier, contactOrTitle)
 
             } catch (e: Exception) {
                 Log.e(TAG, "Error sending reply: ${e.message}", e)
@@ -120,13 +157,13 @@ class TriqxReplyReceiver : BroadcastReceiver() {
         packageName: String,
         replyText: String,
         contactId: Int?,
-        specificIdentifier: String?,
+        senderIdentifier: String?,
         contactOrTitle: String
     ) {
         Log.w(TAG, "RemoteInput failed for $packageName. Executing fallback...")
 
         if (isEmailApp(packageName)) {
-            sendViaEmailIntent(context, packageName, replyText, contactId, specificIdentifier, contactOrTitle)
+            sendViaEmailIntent(context, packageName, replyText, contactId, senderIdentifier, contactOrTitle)
         } else {
             copyToClipboardAndLaunch(context, packageName, replyText)
         }
@@ -137,11 +174,11 @@ class TriqxReplyReceiver : BroadcastReceiver() {
         packageName: String,
         replyText: String,
         contactId: Int?,
-        specificIdentifier: String?,
+        senderIdentifier: String?,
         contactOrTitle: String
     ) {
         val contact = contactId?.let { contactDao.getContactById(it).first() }
-        val cleanEmail = (specificIdentifier ?: contact?.primaryEmail)?.removePrefix("mailto:")?.trim()
+        val cleanEmail = (senderIdentifier ?: contact?.primaryEmail)?.removePrefix("mailto:")?.trim()
 
         val subject = when {
             contactOrTitle.isBlank() -> "Re:"
@@ -198,20 +235,21 @@ class TriqxReplyReceiver : BroadcastReceiver() {
         replyText: String,
         notificationKey: String,
         contactId: Int?,
-        specificIdentifier: String?,
+        senderIdentifier: String?,
+        receiverIdentifier: String?,
         contactOrTitle: String
     ) {
         val contact = contactId?.let { contactDao.getContactById(it).first() }
         val timestamp = System.currentTimeMillis()
 
         // 1. Notification Entity
-        val rawJson = """{"type":"outgoing_reply","text":"$replyText","contactId":${contact?.id},"specificIdentifier":"${specificIdentifier ?: ""}"}"""
+        val rawJson = """{"type":"outgoing_reply","text":"$replyText","contactId":${contact?.id},"senderIdentifier":"${senderIdentifier ?: ""}","receiverIdentifier":"${receiverIdentifier ?: ""}"}"""
         notificationDao.insertNotification(
             NotificationEntity(
                 packageName = packageName,
                 title = "You",
                 text = replyText,
-                senderEmail = specificIdentifier ?: contact?.primaryPhone ?: contact?.primaryEmail,
+                senderEmail = senderIdentifier ?: contact?.primaryPhone ?: contact?.primaryEmail,
                 contactLookupUri = contact?.lookupKey?.let { "content://com.android.contacts/lookup/$it" },
                 rawJson = rawJson,
                 notificationKey = notificationKey,
@@ -221,8 +259,14 @@ class TriqxReplyReceiver : BroadcastReceiver() {
 
         // 2. Conversation Entity
         val current = conversationDao.getConversationByKey(conversationKey).firstOrNull()
+        val parentSubject = current?.messages?.firstOrNull { !it.subText.isNullOrBlank() }?.subText
+        val outgoingSubText = if (isEmailApp(packageName) && !parentSubject.isNullOrBlank()) {
+            if (parentSubject.startsWith("Re:", ignoreCase = true)) parentSubject else "Re: $parentSubject"
+        } else null
+
         val chatMessage = ChatMessage(
             senderName = "You",
+            subText = outgoingSubText,
             bodyText = replyText,
             timestamp = timestamp,
             isFromYou = true
@@ -237,7 +281,8 @@ class TriqxReplyReceiver : BroadcastReceiver() {
             packageName = packageName,
             contactId = contactId ?: current?.contactId,
             title = cleanTitle,
-            specificIdentifier = specificIdentifier ?: current?.specificIdentifier,
+            senderIdentifier = EmailUtils.cleanEmail(senderIdentifier) ?: current?.senderIdentifier,
+            receiverIdentifier = EmailUtils.cleanEmail(receiverIdentifier) ?: current?.receiverIdentifier,
             messages = updatedMessages,
             latestTimestamp = timestamp,
             latestNotificationKey = notificationKey

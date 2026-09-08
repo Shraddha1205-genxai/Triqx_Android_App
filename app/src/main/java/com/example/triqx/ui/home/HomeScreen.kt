@@ -35,6 +35,7 @@ import com.example.triqx.data.local.ChatMessage
 import com.example.triqx.ui.components.AppIcon
 import com.example.triqx.ui.notifications.Conversation
 import com.example.triqx.ui.notifications.NotificationViewModel
+import com.example.triqx.utils.EmailUtils
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -64,7 +65,8 @@ fun HomeScreen(
                                    group.contact?.phoneNumbers?.any { it.contains(searchQuery, ignoreCase = true) } == true ||
                                    group.contact?.emails?.any { it.contains(searchQuery, ignoreCase = true) } == true
 
-                val idMatch = group.specificIdentifier?.contains(searchQuery, ignoreCase = true) == true
+                val idMatch = group.senderIdentifier?.contains(searchQuery, ignoreCase = true) == true ||
+                               group.receiverIdentifier?.contains(searchQuery, ignoreCase = true) == true
                 val pkgMatch = group.packageName.contains(searchQuery, ignoreCase = true)
                 val msgMatch = group.messages.any {
                     it.senderName.contains(searchQuery, ignoreCase = true) ||
@@ -443,7 +445,12 @@ fun WhatsAppConversationCard(
                         !latest.senderName.equals("You", ignoreCase = true) -> "${latest.senderName}: "
                 else -> ""
             }
-            val cleanBody = latest.bodyText.ifBlank { "No content" }.replace('\n', ' ').trim()
+            val content = if (!latest.subText.isNullOrBlank()) {
+                latest.subText
+            } else {
+                latest.bodyText.ifBlank { "No content" }
+            }
+            val cleanBody = content.replace('\n', ' ').trim()
             "$prefix$cleanBody"
         }
     }
@@ -453,6 +460,7 @@ fun WhatsAppConversationCard(
             group.packageName.contains("whatsapp", ignoreCase = true) -> "WhatsApp"
             group.packageName.contains("messaging", ignoreCase = true) || group.packageName.contains("mms", ignoreCase = true) -> "Messages"
             group.packageName.contains("gm", ignoreCase = true) || group.packageName.contains("gmail", ignoreCase = true) -> "Gmail"
+            group.packageName.contains("outlook", ignoreCase = true) -> "Outlook"
             group.packageName.contains("slack", ignoreCase = true) -> "Slack"
             group.packageName.contains("telegram", ignoreCase = true) -> "Telegram"
             else -> group.packageName.substringAfterLast('.').replaceFirstChar { it.uppercase() }
@@ -504,7 +512,7 @@ fun WhatsAppConversationCard(
                 }
             }
 
-            // Middle: Name, VIP badge, App Name, and Recent Message Preview
+            // Middle: Name, Email tag, VIP badge, App Name, and Recent Message Preview
             Column(modifier = Modifier.weight(1f)) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -516,8 +524,21 @@ fun WhatsAppConversationCard(
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onSurface,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
                     )
+
+                    val senderEmail = EmailUtils.cleanEmail(group.senderIdentifier)
+                    if (!senderEmail.isNullOrBlank() && !senderEmail.equals(groupTitle, ignoreCase = true)) {
+                        Text(
+                            text = "($senderEmail)",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+
                     if (group.contact != null) {
                         Surface(
                             shape = RoundedCornerShape(4.dp),
@@ -534,12 +555,33 @@ fun WhatsAppConversationCard(
                     }
                 }
 
-                Text(
-                    text = appName,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                val cleanReceiver = EmailUtils.cleanEmail(group.receiverIdentifier)
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
                     modifier = Modifier.padding(top = 1.dp)
-                )
+                ) {
+                    Text(
+                        text = appName,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (!cleanReceiver.isNullOrBlank()) {
+                        Text(
+                            text = "•",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                        )
+                        Text(
+                            text = cleanReceiver,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
 
                 if (recentMessagePreview.isNotBlank()) {
                     Text(
@@ -644,6 +686,23 @@ fun GoogleMessageBubble(
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.primary.copy(alpha = 0.85f),
                         modifier = Modifier.padding(bottom = 2.dp)
+                    )
+                }
+
+                if (!message.subText.isNullOrBlank()) {
+                    val subjectDisplay = message.subText.removePrefix("Subject:").trim()
+                    Text(
+                        text = subjectDisplay,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = if (isFromYou) {
+                            MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.9f)
+                        } else {
+                            MaterialTheme.colorScheme.primary
+                        },
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(bottom = 3.dp)
                     )
                 }
 

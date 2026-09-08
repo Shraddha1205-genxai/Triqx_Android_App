@@ -56,7 +56,8 @@ object TriqxAssistantNotificationManager {
         packageName: String,
         notificationKey: String,
         contactId: Int?,
-        specificIdentifier: String?,
+        senderIdentifier: String?,
+        receiverIdentifier: String? = null,
         messages: List<NotificationEntity>,
         smartReplies: List<String>
     ) {
@@ -122,9 +123,9 @@ object TriqxAssistantNotificationManager {
 
         // Add action buttons based on style
         if (style == "body_numbered") {
-            addNumberedActions(context, builder, groupKey, packageName, notificationKey, contactId, specificIdentifier, contactOrTitle, smartReplies)
+            addNumberedActions(context, builder, groupKey, packageName, notificationKey, contactId, senderIdentifier, receiverIdentifier, contactOrTitle, smartReplies)
         } else {
-            addChipActions(context, builder, groupKey, packageName, notificationKey, contactId, specificIdentifier, contactOrTitle, smartReplies)
+            addChipActions(context, builder, groupKey, packageName, notificationKey, contactId, senderIdentifier, receiverIdentifier, contactOrTitle, smartReplies)
         }
 
         manager.notify(tag, NOTIFICATION_ID, builder.build())
@@ -152,14 +153,15 @@ object TriqxAssistantNotificationManager {
         packageName: String,
         notificationKey: String,
         contactId: Int?,
-        specificIdentifier: String?,
+        senderIdentifier: String?,
+        receiverIdentifier: String?,
         contactOrTitle: String,
         smartReplies: List<String>
     ) {
         // Add "Send #1", "Send #2", "Send #3" buttons
         smartReplies.take(3).forEachIndexed { index, replyText ->
             val intent = createReplyIntent(context, TriqxReplyReceiver.ACTION_SMART_REPLY,
-                groupKey, packageName, notificationKey, contactId, specificIdentifier, contactOrTitle, replyText)
+                groupKey, packageName, notificationKey, contactId, senderIdentifier, receiverIdentifier, contactOrTitle, replyText)
 
             val pendingIntent = PendingIntent.getBroadcast(
                 context, (groupKey.hashCode() * 10) + index, intent,
@@ -171,7 +173,7 @@ object TriqxAssistantNotificationManager {
 
         // Add "Edit" button with RemoteInput
         val editIntent = createReplyIntent(context, TriqxReplyReceiver.ACTION_CUSTOM_REPLY,
-            groupKey, packageName, notificationKey, contactId, specificIdentifier, contactOrTitle)
+            groupKey, packageName, notificationKey, contactId, senderIdentifier, receiverIdentifier, contactOrTitle)
 
         val editPending = PendingIntent.getBroadcast(
             context, (groupKey.hashCode() * 10) + 9, editIntent,
@@ -197,13 +199,14 @@ object TriqxAssistantNotificationManager {
         packageName: String,
         notificationKey: String,
         contactId: Int?,
-        specificIdentifier: String?,
+        senderIdentifier: String?,
+        receiverIdentifier: String?,
         contactOrTitle: String,
         smartReplies: List<String>
     ) {
         // Smart reply chip with choices dropdown
         val chipIntent = createReplyIntent(context, TriqxReplyReceiver.ACTION_CUSTOM_REPLY,
-            groupKey, packageName, notificationKey, contactId, specificIdentifier, contactOrTitle)
+            groupKey, packageName, notificationKey, contactId, senderIdentifier, receiverIdentifier, contactOrTitle)
 
         val chipPending = PendingIntent.getBroadcast(
             context, (groupKey.hashCode() * 10) + 9, chipIntent,
@@ -224,7 +227,7 @@ object TriqxAssistantNotificationManager {
         // Quick send buttons (first 2 replies)
         smartReplies.take(2).forEachIndexed { index, replyText ->
             val intent = createReplyIntent(context, TriqxReplyReceiver.ACTION_SMART_REPLY,
-                groupKey, packageName, notificationKey, contactId, specificIdentifier, contactOrTitle, replyText)
+                groupKey, packageName, notificationKey, contactId, senderIdentifier, receiverIdentifier, contactOrTitle, replyText)
 
             val pendingIntent = PendingIntent.getBroadcast(
                 context, (groupKey.hashCode() * 10) + index, intent,
@@ -247,7 +250,8 @@ object TriqxAssistantNotificationManager {
         packageName: String,
         notificationKey: String,
         contactId: Int?,
-        specificIdentifier: String?,
+        senderIdentifier: String?,
+        receiverIdentifier: String?,
         contactOrTitle: String,
         replyText: String? = null
     ): Intent {
@@ -257,7 +261,9 @@ object TriqxAssistantNotificationManager {
             putExtra(TriqxReplyReceiver.EXTRA_PACKAGE_NAME, packageName)
             putExtra(TriqxReplyReceiver.EXTRA_NOTIFICATION_KEY, notificationKey)
             putExtra(TriqxReplyReceiver.EXTRA_CONTACT_ID, contactId ?: -1)
-            putExtra(TriqxReplyReceiver.EXTRA_SPECIFIC_IDENTIFIER, specificIdentifier)
+            putExtra(TriqxReplyReceiver.EXTRA_SENDER_IDENTIFIER, senderIdentifier)
+            putExtra(TriqxReplyReceiver.EXTRA_RECEIVER_IDENTIFIER, receiverIdentifier)
+            putExtra(TriqxReplyReceiver.EXTRA_SPECIFIC_IDENTIFIER, senderIdentifier) // backward compat
             putExtra(TriqxReplyReceiver.EXTRA_CONTACT_OR_TITLE, contactOrTitle)
             if (replyText != null) putExtra(TriqxReplyReceiver.EXTRA_REPLY_TEXT, replyText)
         }

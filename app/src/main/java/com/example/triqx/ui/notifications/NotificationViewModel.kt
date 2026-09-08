@@ -15,10 +15,12 @@ import com.example.triqx.data.local.NotificationDao
 import com.example.triqx.data.local.NotificationEntity
 import com.example.triqx.data.repository.OpenAiRepository
 import com.example.triqx.service.TriqxNotificationListenerService
+import com.example.triqx.utils.EmailUtils
 import com.google.gson.JsonParser
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -36,13 +38,18 @@ data class Conversation(
     val groupKey: String,                        // conversationKey
     val title: String,                           // Clean display title (Group Name or Sender Name)
     val contact: ContactEntity?,                 // Resolved from contactId
-    val specificIdentifier: String?,             // Email address or phone number
+    val senderIdentifier: String?,               // Email address or phone number of sender
+    val receiverIdentifier: String? = null,      // User's receiving account email or identifier
     val packageName: String,                     // Source app package
     val messages: List<ChatMessage>,             // Conversation messages (newest first)
     val latestTimestamp: Long,                   // Timestamp of the latest message
     val canReply: Boolean,                       // Whether RemoteInput reply is available
     val latestNotificationKey: String            // Android notification key for reply/dismiss
-)
+) {
+    // Backward-compatibility getters
+    val specificIdentifier: String? get() = senderIdentifier
+    val accountEmail: String? get() = receiverIdentifier
+}
 
 @HiltViewModel
 class NotificationViewModel @Inject constructor(
@@ -51,6 +58,8 @@ class NotificationViewModel @Inject constructor(
     private val contactDao: ContactDao,
     private val appDao: AppDao,
     private val openAiRepository: OpenAiRepository,
+    val emailAccountStore: com.example.triqx.data.local.EmailAccountStore,
+    val emailReplyDispatcher: com.example.triqx.service.EmailReplyDispatcher,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
@@ -147,7 +156,8 @@ class NotificationViewModel @Inject constructor(
                 groupKey = entity.conversationKey,
                 title = entity.title,
                 contact = contact,
-                specificIdentifier = entity.specificIdentifier,
+                senderIdentifier = EmailUtils.cleanEmail(entity.senderIdentifier) ?: entity.senderIdentifier,
+                receiverIdentifier = EmailUtils.cleanEmail(entity.receiverIdentifier) ?: entity.receiverIdentifier,
                 packageName = entity.packageName,
                 messages = entity.messages,
                 latestTimestamp = entity.latestTimestamp,
@@ -234,8 +244,63 @@ class NotificationViewModel @Inject constructor(
     // Reply Actions (1-Stage)
     // =============================
 
+    fun isEmailAccountConnected(packageName: String, accountEmail: String? = null): Boolean {
+        return emailReplyDispatcher.canReply(packageName, accountEmail)
+    }
+
     fun canReply(groupKey: String, notificationKey: String? = null): Boolean {
+        if (isEmailApp(groupKey) && emailAccountStore.isGmailConnected()) return true
         return TriqxNotificationListenerService.instance?.canReply(groupKey, notificationKey) == true
+    }
+
+    fun sendEmailReply(
+        conversation: Conversation,
+        replyText: String,
+        onResult: ((Boolean, String?) -> Unit)? = null
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val emailFromKey = if (conversation.groupKey.contains("_email_")) conversation.groupKey.substringAfterLast("_email_").substringAfterLast("_").trim() else null
+            val cleanEmail = EmailUtils.cleanEmail(conversation.senderIdentifier)
+                ?: EmailUtils.cleanEmail(conversation.contact?.primaryEmail)
+                ?: EmailUtils.cleanEmail(emailFromKey)
+
+            if (cleanEmail.isNullOrBlank()) {
+                withContext(Dispatchers.Main) {
+                    onResult?.invoke(false, "No recipient email address found")
+                }
+                return@launch
+            }
+
+            val subject = conversation.messages.firstOrNull { !it.subText.isNullOrBlank() }?.subText ?: conversation.title
+            val cleanReceiver = EmailUtils.cleanEmail(conversation.receiverIdentifier)
+
+            val result = emailReplyDispatcher.sendReply(
+                recipientEmail = cleanEmail,
+                subject = subject,
+                replyText = replyText,
+                packageName = conversation.packageName,
+                accountEmail = cleanReceiver
+            )
+
+            if (result.isSuccess) {
+                recordOutgoingReply(
+                    packageName = conversation.packageName,
+                    replyText = replyText,
+                    notificationKey = conversation.latestNotificationKey,
+                    contact = conversation.contact,
+                    senderIdentifier = cleanEmail,
+                    receiverIdentifier = conversation.receiverIdentifier,
+                    groupKey = conversation.groupKey
+                )
+                withContext(Dispatchers.Main) {
+                    onResult?.invoke(true, null)
+                }
+            } else {
+                withContext(Dispatchers.Main) {
+                    onResult?.invoke(false, result.exceptionOrNull()?.message)
+                }
+            }
+        }
     }
 
     fun replyToNotification(
@@ -243,7 +308,7 @@ class NotificationViewModel @Inject constructor(
         replyMessage: String = "Replied you using Triqx App",
         packageName: String? = null,
         contact: ContactEntity? = null,
-        specificIdentifier: String? = null,
+        senderIdentifier: String? = null,
         chatTag: String? = null,
         groupKey: String? = null
     ): Boolean {
@@ -256,7 +321,7 @@ class NotificationViewModel @Inject constructor(
         ) == true
 
         if (success) {
-            recordOutgoingReply(packageName ?: "com.triqx", replyMessage, key, contact, specificIdentifier, targetKey)
+            recordOutgoingReply(packageName ?: "com.triqx", replyMessage, key, contact, senderIdentifier, groupKey = targetKey)
         }
         return success
     }
@@ -266,7 +331,8 @@ class NotificationViewModel @Inject constructor(
         replyText: String,
         notificationKey: String,
         contact: ContactEntity? = null,
-        specificIdentifier: String? = null,
+        senderIdentifier: String? = null,
+        receiverIdentifier: String? = null,
         groupKey: String? = null
     ) {
         viewModelScope.launch(Dispatchers.IO) {
@@ -280,9 +346,9 @@ class NotificationViewModel @Inject constructor(
                     packageName = packageName,
                     title = "You",
                     text = replyText,
-                    senderEmail = specificIdentifier ?: contact?.primaryPhone ?: contact?.primaryEmail,
+                    senderEmail = senderIdentifier ?: contact?.primaryPhone ?: contact?.primaryEmail,
                     contactLookupUri = contact?.lookupKey?.let { "content://com.android.contacts/lookup/$it" },
-                    rawJson = """{"type":"outgoing_reply","text":"$replyText","contactId":${contact?.id},"specificIdentifier":"${specificIdentifier ?: ""}"}""",
+                    rawJson = """{"type":"outgoing_reply","text":"$replyText","contactId":${contact?.id},"senderIdentifier":"${senderIdentifier ?: ""}","receiverIdentifier":"${receiverIdentifier ?: ""}"}""",
                     notificationKey = notificationKey,
                     timestamp = timestamp
                 )
@@ -290,8 +356,14 @@ class NotificationViewModel @Inject constructor(
 
             if (groupKey != null) {
                 val current = conversationDao.getConversationByKey(groupKey).firstOrNull()
+                val parentSubject = current?.messages?.firstOrNull { !it.subText.isNullOrBlank() }?.subText
+                val outgoingSubText = if (isEmailApp(packageName) && !parentSubject.isNullOrBlank()) {
+                    if (parentSubject.startsWith("Re:", ignoreCase = true)) parentSubject else "Re: $parentSubject"
+                } else null
+
                 val chatMessage = ChatMessage(
                     senderName = "You",
+                    subText = outgoingSubText,
                     bodyText = replyText,
                     timestamp = timestamp,
                     isFromYou = true
@@ -308,7 +380,8 @@ class NotificationViewModel @Inject constructor(
                         packageName = packageName,
                         contactId = contact?.id ?: current?.contactId,
                         title = cleanTitle,
-                        specificIdentifier = specificIdentifier ?: current?.specificIdentifier,
+                        senderIdentifier = EmailUtils.cleanEmail(senderIdentifier) ?: current?.senderIdentifier,
+                        receiverIdentifier = EmailUtils.cleanEmail(receiverIdentifier) ?: current?.receiverIdentifier,
                         messages = updatedMessages,
                         latestTimestamp = timestamp,
                         latestNotificationKey = notificationKey

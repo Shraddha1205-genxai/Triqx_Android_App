@@ -18,6 +18,7 @@ import com.example.triqx.data.local.NotificationDao
 import com.example.triqx.data.local.NotificationEntity
 import com.example.triqx.data.local.ReplyActionStore
 import com.example.triqx.data.repository.OpenAiRepository
+import com.example.triqx.utils.EmailUtils
 import com.google.gson.GsonBuilder
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
@@ -49,6 +50,7 @@ class TriqxNotificationListenerService : NotificationListenerService() {
     @Inject lateinit var contactDao: ContactDao
     @Inject lateinit var openAiRepository: OpenAiRepository
     @Inject lateinit var replyActionStore: ReplyActionStore
+    @Inject lateinit var emailAccountStore: com.example.triqx.data.local.EmailAccountStore
     @Inject lateinit var mapperRegistry: com.example.triqx.service.mapper.NotificationMapperRegistry
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -117,6 +119,7 @@ class TriqxNotificationListenerService : NotificationListenerService() {
      * Determines if a given conversation has an available reply action.
      */
     fun canReply(conversationKey: String, notificationKey: String? = null): Boolean {
+        if (isEmailApp(conversationKey) && emailAccountStore.isGmailConnected()) return true
         if (replyActionStore.canReply(conversationKey)) return true
         if (notificationKey != null && activeNotifications?.any { it.key == notificationKey && hasReplyAction(it.notification) } == true) return true
         return findActionInActiveByConversationKey(conversationKey) != null
@@ -258,9 +261,11 @@ class TriqxNotificationListenerService : NotificationListenerService() {
         val packageName = sbn.packageName
         val extras = notification.extras
         val title = extras.getString(Notification.EXTRA_CONVERSATION_TITLE)
-        val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()
-        val bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()
-        val subText = extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString()
+            ?: extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim()
+            ?: extras.getCharSequence("android.title.big")?.toString()?.trim()
+        val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.trim()
+        val bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()?.trim()
+        val subText = extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString()?.trim()
 
         // --- 1. SENDER EXTRACTION (Email & Lookup URI) ---
         val emailSet = mutableSetOf<String>()
@@ -400,6 +405,10 @@ class TriqxNotificationListenerService : NotificationListenerService() {
                 parsed.conversationTitle
             }
             val cleanSubText = if (isEmailApp(packageName)) parsed.subText else null
+            val cleanReceiver = EmailUtils.cleanEmail(parsed.receiverIdentifier)
+            val resolvedSenderEmail = EmailUtils.cleanEmail(parsed.senderIdentifier)
+                ?: (EmailUtils.cleanEmail(senderEmail)?.takeIf { cleanReceiver == null || !it.equals(cleanReceiver, ignoreCase = true) })
+                ?: matchedContact?.primaryEmail
 
             // --- 2. RECORD CLEAN NOTIFICATION IN NotificationDao (FOR DEBUG TAB & HISTORY) ---
             val existing = notificationDao.getLatestMatching(packageName, senderName, parsed.bodyText)
@@ -411,7 +420,7 @@ class TriqxNotificationListenerService : NotificationListenerService() {
                         packageName = packageName,
                         title = senderName,
                         text = parsed.bodyText,
-                        senderEmail = cleanSubText ?: (if (isEmailApp(packageName)) senderEmail else null),
+                        senderEmail = resolvedSenderEmail,
                         contactLookupUri = contactLookupUri,
                         rawJson = rawJson,
                         notificationKey = sbn.key,
@@ -447,12 +456,20 @@ class TriqxNotificationListenerService : NotificationListenerService() {
                     .sortedByDescending { it.timestamp }
                     .distinctBy { "${it.senderName}_${it.bodyText}_${it.timestamp / 1000}" }
 
+                val cleanSender = EmailUtils.cleanEmail(resolvedSenderEmail)
+                    ?: matchedContact?.primaryPhone
+                    ?: EmailUtils.cleanEmail(currentConversation?.senderIdentifier)
+                    ?: currentConversation?.senderIdentifier
+                val finalReceiver = cleanReceiver
+                    ?: EmailUtils.cleanEmail(currentConversation?.receiverIdentifier)
+
                 val entityToSave = ConversationEntity(
                     conversationKey = conversationKey,
                     packageName = packageName,
                     contactId = matchedContact?.id ?: currentConversation?.contactId,
                     title = parsed.conversationTitle,
-                    specificIdentifier = senderEmail ?: matchedContact?.primaryPhone ?: currentConversation?.specificIdentifier,
+                    senderIdentifier = cleanSender,
+                    receiverIdentifier = finalReceiver,
                     messages = updatedMessages,
                     latestTimestamp = timestamp,
                     latestNotificationKey = sbn.key
@@ -483,7 +500,7 @@ class TriqxNotificationListenerService : NotificationListenerService() {
                         packageName = packageName,
                         title = senderName,
                         text = parsed.bodyText,
-                        senderEmail = cleanSubText ?: (if (isEmailApp(packageName)) senderEmail else null),
+                        senderEmail = resolvedSenderEmail,
                         contactLookupUri = contactLookupUri,
                         rawJson = rawJson,
                         notificationKey = sbn.key,
@@ -500,7 +517,8 @@ class TriqxNotificationListenerService : NotificationListenerService() {
                     packageName = packageName,
                     notificationKey = sbn.key,
                     contactId = matchedContact?.id,
-                    specificIdentifier = senderEmail ?: matchedContact?.primaryPhone,
+                    senderIdentifier = resolvedSenderEmail ?: matchedContact?.primaryPhone,
+                    receiverIdentifier = parsed.receiverIdentifier,
                     messages = messagesForAi,
                     smartReplies = smartReplies
                 )
