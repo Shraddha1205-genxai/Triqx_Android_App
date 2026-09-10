@@ -49,6 +49,7 @@ import com.example.triqx.data.local.ChatMessage
 import com.example.triqx.ui.components.AppIcon
 import com.example.triqx.ui.notifications.Conversation
 import com.example.triqx.ui.notifications.NotificationViewModel
+import com.example.triqx.service.email.EmailProvider
 import com.example.triqx.utils.EmailUtils
 import java.text.SimpleDateFormat
 import java.util.*
@@ -577,7 +578,12 @@ private fun sendReply(
         val cleanReceiver = EmailUtils.cleanEmail(conversation.receiverIdentifier)
         val isConnected = viewModel.isEmailAccountConnected(conversation.packageName, cleanReceiver)
         if (isConnected) {
-            Toast.makeText(context, "Sending via Gmail...", Toast.LENGTH_SHORT).show()
+            val emailAppName = when {
+                conversation.packageName.contains("outlook", ignoreCase = true) -> "Outlook"
+                conversation.packageName.contains("gm", ignoreCase = true) || conversation.packageName.contains("gmail", ignoreCase = true) -> "Gmail"
+                else -> EmailProvider.fromPackageName(conversation.packageName)?.displayName ?: "Email"
+            }
+            Toast.makeText(context, "Sending via $emailAppName...", Toast.LENGTH_SHORT).show()
             viewModel.sendEmailReply(conversation, replyText) { success, errorMsg ->
                 if (success) {
                     Toast.makeText(context, "Sent: $replyText", Toast.LENGTH_SHORT).show()

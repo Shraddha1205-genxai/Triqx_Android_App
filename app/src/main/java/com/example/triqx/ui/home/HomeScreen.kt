@@ -1,11 +1,13 @@
 package com.example.triqx.ui.home
 
+import android.content.Context
 import android.content.Intent
 import android.provider.Settings
 import android.widget.Toast
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -33,11 +35,59 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.triqx.data.local.ChatMessage
 import com.example.triqx.ui.components.AppIcon
+import com.example.triqx.ui.components.ProfileAvatarBadge
+import com.example.triqx.ui.components.TriqxSearchBar
+import com.example.triqx.ui.theme.Dimens
 import com.example.triqx.ui.notifications.Conversation
 import com.example.triqx.ui.notifications.NotificationViewModel
 import com.example.triqx.utils.EmailUtils
 import java.text.SimpleDateFormat
 import java.util.*
+import java.util.concurrent.ConcurrentHashMap
+
+/**
+ * Resolves human-readable app display names with in-memory caching.
+ */
+object AppNameResolver {
+    private val nameCache = ConcurrentHashMap<String, String>()
+
+    fun getDisplayName(context: Context, packageName: String): String {
+        return nameCache.getOrPut(packageName) {
+            when {
+                packageName.contains("whatsapp", ignoreCase = true) -> "WhatsApp"
+                packageName.contains("gm", ignoreCase = true) || packageName.contains("gmail", ignoreCase = true) -> "Gmail"
+                packageName.contains("outlook", ignoreCase = true) -> "Outlook"
+                packageName.contains("slack", ignoreCase = true) -> "Slack"
+                packageName.contains("telegram", ignoreCase = true) -> "Telegram"
+                packageName.contains("messaging", ignoreCase = true) || packageName.contains("mms", ignoreCase = true) -> "Messages"
+                else -> {
+                    try {
+                        val pm = context.packageManager
+                        val appInfo = pm.getApplicationInfo(packageName, 0)
+                        val label = pm.getApplicationLabel(appInfo).toString()
+                        if (label.isNotBlank()) label else fallback(packageName)
+                    } catch (_: Exception) {
+                        fallback(packageName)
+                    }
+                }
+            }
+        }
+    }
+
+    private fun fallback(packageName: String): String {
+        return packageName.substringAfterLast('.').replaceFirstChar { it.uppercase() }
+    }
+}
+
+/**
+ * Model representing an app filter chip.
+ */
+data class AppFilter(
+    val id: String,
+    val displayName: String,
+    val packageName: String?,
+    val latestTimestamp: Long
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -46,19 +96,66 @@ fun HomeScreen(
     onConversationClick: (String) -> Unit,
     onViewContact: (String) -> Unit,
     onNavigateToContacts: () -> Unit,
-    onNavigateToApps: () -> Unit
+    onNavigateToApps: () -> Unit,
+    onNavigateToSettings: () -> Unit = {},
+    userInitials: String = "U"
 ) {
     val context = LocalContext.current
     val groups by viewModel.groupedPriorityNotifications.collectAsStateWithLifecycle()
     val isEnabled = viewModel.isNotificationServiceEnabled()
     var searchQuery by rememberSaveable { mutableStateOf("") }
+    var selectedAppId by rememberSaveable { mutableStateOf("ALL") }
     var showClearConfirmDialog by remember { mutableStateOf(false) }
 
-    val filteredGroups = remember(groups, searchQuery) {
-        if (searchQuery.isBlank()) {
-            groups
+    // Dynamic app filters: "All" first, then only apps with active notifications, ordered by most recent notification
+    val availableAppFilters = remember(groups, context) {
+        if (groups.isEmpty()) {
+            emptyList()
         } else {
-            groups.filter { group ->
+            val appGroups = groups.groupBy { conv ->
+                AppNameResolver.getDisplayName(context, conv.packageName)
+            }
+
+            val sortedApps = appGroups.map { (name, convList) ->
+                val mostRecentTimestamp = convList.maxOfOrNull { it.latestTimestamp } ?: 0L
+                val representativePackage = convList.first().packageName
+                AppFilter(
+                    id = name,
+                    displayName = name,
+                    packageName = representativePackage,
+                    latestTimestamp = mostRecentTimestamp
+                )
+            }.sortedByDescending { it.latestTimestamp }
+
+            listOf(
+                AppFilter(
+                    id = "ALL",
+                    displayName = "All",
+                    packageName = null,
+                    latestTimestamp = Long.MAX_VALUE
+                )
+            ) + sortedApps
+        }
+    }
+
+    // Reset filter to "ALL" if the selected app has no remaining notifications
+    LaunchedEffect(availableAppFilters) {
+        if (selectedAppId != "ALL" && availableAppFilters.none { it.id == selectedAppId }) {
+            selectedAppId = "ALL"
+        }
+    }
+
+    val filteredGroups = remember(groups, searchQuery, selectedAppId, context) {
+        var result = groups
+
+        if (selectedAppId != "ALL") {
+            result = result.filter { conv ->
+                AppNameResolver.getDisplayName(context, conv.packageName) == selectedAppId
+            }
+        }
+
+        if (searchQuery.isNotBlank()) {
+            result = result.filter { group ->
                 val titleMatch = group.title.contains(searchQuery, ignoreCase = true)
                 val contactMatch = group.contact?.displayName?.contains(searchQuery, ignoreCase = true) == true ||
                                    group.contact?.officialName?.contains(searchQuery, ignoreCase = true) == true ||
@@ -76,6 +173,8 @@ fun HomeScreen(
                 titleMatch || contactMatch || idMatch || pkgMatch || msgMatch
             }
         }
+
+        result
     }
 
     val totalMessages = remember(groups) {
@@ -93,80 +192,40 @@ fun HomeScreen(
                 .statusBarsPadding()
         ) {
             // Google Drive Style Floating Search Bar Pill
-            Surface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 6.dp)
-                    .height(54.dp),
-                shape = CircleShape,
-                color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                tonalElevation = 2.dp
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = 14.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Icon(
-                        Icons.Default.Search,
-                        contentDescription = "Search",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(24.dp)
+            TriqxSearchBar(
+                query = searchQuery,
+                onQueryChange = { searchQuery = it },
+                placeholder = "Search in Triqx",
+                trailingContent = {
+                    ProfileAvatarBadge(
+                        initials = userInitials,
+                        onClick = onNavigateToSettings
                     )
+                }
+            )
 
-                    Box(
-                        modifier = Modifier.weight(1f),
-                        contentAlignment = Alignment.CenterStart
-                    ) {
-                        if (searchQuery.isEmpty()) {
-                            Text(
-                                text = if (groups.isEmpty()) "Search in Triqx" else "Search $totalMessages messages in ${groups.size} VIPs...",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        BasicTextField(
-                            value = searchQuery,
-                            onValueChange = { searchQuery = it },
-                            singleLine = true,
-                            textStyle = MaterialTheme.typography.bodyMedium.copy(
-                                color = MaterialTheme.colorScheme.onSurface
-                            ),
-                            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                            modifier = Modifier.fillMaxWidth()
+            // App Filter Chips (App-wise filter: All, WhatsApp, Gmail, etc. with most recent first)
+            if (availableAppFilters.isNotEmpty()) {
+                LazyRow(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = Dimens.SpacingSmall, bottom = Dimens.SpacingMicro),
+                    contentPadding = PaddingValues(horizontal = Dimens.SpacingStandard),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(
+                        items = availableAppFilters,
+                        key = { it.id }
+                    ) { filter ->
+                        val isSelected = filter.id == selectedAppId
+                        TriqxFilterChip(
+                            label = filter.displayName,
+                            packageName = filter.packageName,
+                            isSelected = isSelected,
+                            onClick = {
+                                selectedAppId = if (isSelected && filter.id != "ALL") "ALL" else filter.id
+                            }
                         )
-                    }
-
-                    if (searchQuery.isNotEmpty()) {
-                        IconButton(
-                            onClick = { searchQuery = "" },
-                            modifier = Modifier.size(24.dp)
-                        ) {
-                            Icon(
-                                Icons.Default.Clear,
-                                contentDescription = "Clear search",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
-                    }
-
-                    // VIP Count Avatar Badge
-                    Surface(
-                        modifier = Modifier.size(32.dp),
-                        shape = CircleShape,
-                        color = MaterialTheme.colorScheme.primaryContainer
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Text(
-                                text = if (totalMessages > 0) "$totalMessages" else "VIP",
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
-                        }
                     }
                 }
             }
@@ -175,7 +234,12 @@ fun HomeScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 16.dp, end = 12.dp, top = 8.dp, bottom = 4.dp),
+                    .padding(
+                        start = Dimens.SpacingStandard,
+                        end = Dimens.SpacingStandard,
+                        top = Dimens.SpacingSmall,
+                        bottom = Dimens.SpacingMicro
+                    ),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
@@ -277,37 +341,37 @@ fun HomeScreen(
                         verticalArrangement = Arrangement.Center
                     ) {
                         Surface(
-                            modifier = Modifier.size(80.dp),
-                            shape = RoundedCornerShape(24.dp),
+                            modifier = Modifier.size(72.dp),
+                            shape = RoundedCornerShape(20.dp),
                             color = MaterialTheme.colorScheme.surfaceContainerHigh
                         ) {
                             Box(contentAlignment = Alignment.Center) {
                                 Icon(
                                     Icons.Default.NotificationsActive,
                                     contentDescription = null,
-                                    modifier = Modifier.size(38.dp),
+                                    modifier = Modifier.size(36.dp),
                                     tint = MaterialTheme.colorScheme.primary
                                 )
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(18.dp))
+                        Spacer(modifier = Modifier.height(Dimens.SpacingStandard))
 
                         Text(
                             text = "No Priority Messages",
                             style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.Bold
                         )
-                        Spacer(modifier = Modifier.height(6.dp))
+                        Spacer(modifier = Modifier.height(Dimens.SpacingSmall))
                         Text(
-                            text = "Notifications from your Priority Contacts and Important Apps will appear here as WhatsApp-style chats.",
+                            text = "Notifications from your VIP contacts and apps will appear here as conversations.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                            modifier = Modifier.padding(horizontal = 16.dp)
+                            modifier = Modifier.padding(horizontal = Dimens.SpacingStandard)
                         )
 
-                        Spacer(modifier = Modifier.height(20.dp))
+                        Spacer(modifier = Modifier.height(Dimens.SpacingLarge))
 
                         Row(
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -343,8 +407,18 @@ fun HomeScreen(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
                 ) {
+                    val emptyMessage = when {
+                        searchQuery.isNotBlank() && selectedAppId != "ALL" ->
+                            "No $selectedAppId messages match \"$searchQuery\""
+                        searchQuery.isNotBlank() ->
+                            "No messages match \"$searchQuery\""
+                        selectedAppId != "ALL" ->
+                            "No messages from $selectedAppId"
+                        else ->
+                            "No messages found"
+                    }
                     Text(
-                        text = "No conversations match \"$searchQuery\"",
+                        text = emptyMessage,
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -391,7 +465,7 @@ fun HomeScreen(
     if (showClearConfirmDialog) {
         AlertDialog(
             onDismissRequest = { showClearConfirmDialog = false },
-            shape = RoundedCornerShape(24.dp),
+            shape = Dimens.DialogShape,
             title = {
                 Text(
                     text = "Clear Priority Feed?",
@@ -421,6 +495,62 @@ fun HomeScreen(
     }
 }
 
+/**
+ * Compact, calm filter chip for app-wise filtering.
+ */
+@Composable
+private fun TriqxFilterChip(
+    label: String,
+    packageName: String?,
+    isSelected: Boolean,
+    onClick: () -> Unit
+) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(12.dp),
+        color = if (isSelected) {
+            MaterialTheme.colorScheme.secondaryContainer
+        } else {
+            MaterialTheme.colorScheme.surfaceContainerLow
+        },
+        border = androidx.compose.foundation.BorderStroke(
+            width = 1.dp,
+            color = if (isSelected) {
+                MaterialTheme.colorScheme.secondary.copy(alpha = 0.3f)
+            } else {
+                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+            }
+        ),
+        tonalElevation = if (isSelected) 1.dp else 0.dp
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            if (packageName != null) {
+                AppIcon(
+                    packageName = packageName,
+                    appName = label,
+                    modifier = Modifier
+                        .size(16.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                )
+            }
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
+                color = if (isSelected) {
+                    MaterialTheme.colorScheme.onSecondaryContainer
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                }
+            )
+        }
+    }
+}
+
 @Composable
 fun WhatsAppConversationCard(
     group: Conversation,
@@ -428,6 +558,7 @@ fun WhatsAppConversationCard(
     onDismissGroup: () -> Unit,
     onViewContact: (String) -> Unit
 ) {
+    val context = LocalContext.current
     val dateFormat = remember { SimpleDateFormat("h:mm a", Locale.getDefault()) }
     val formattedDate = remember(group.latestTimestamp) {
         dateFormat.format(Date(group.latestTimestamp))
@@ -455,24 +586,16 @@ fun WhatsAppConversationCard(
         }
     }
 
-    val appName = remember(group.packageName) {
-        when {
-            group.packageName.contains("whatsapp", ignoreCase = true) -> "WhatsApp"
-            group.packageName.contains("messaging", ignoreCase = true) || group.packageName.contains("mms", ignoreCase = true) -> "Messages"
-            group.packageName.contains("gm", ignoreCase = true) || group.packageName.contains("gmail", ignoreCase = true) -> "Gmail"
-            group.packageName.contains("outlook", ignoreCase = true) -> "Outlook"
-            group.packageName.contains("slack", ignoreCase = true) -> "Slack"
-            group.packageName.contains("telegram", ignoreCase = true) -> "Telegram"
-            else -> group.packageName.substringAfterLast('.').replaceFirstChar { it.uppercase() }
-        }
+    val appName = remember(group.packageName, context) {
+        AppNameResolver.getDisplayName(context, group.packageName)
     }
 
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(20.dp))
+            .clip(Dimens.CardShape)
             .clickable { onClick() },
-        shape = RoundedCornerShape(20.dp),
+        shape = Dimens.CardShape,
         color = MaterialTheme.colorScheme.surfaceContainerLow,
         tonalElevation = 1.dp
     ) {

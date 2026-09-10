@@ -22,6 +22,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.example.triqx.ui.theme.Dimens
 import com.example.triqx.ui.theme.PixelAvatarColors
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -92,7 +93,7 @@ fun ContactDetailsScreen(
                 // Large Pixel Squircle Initial Avatar
                 Surface(
                     modifier = Modifier.size(92.dp),
-                    shape = RoundedCornerShape(28.dp),
+                    shape = RoundedCornerShape(24.dp),
                     color = avatarColors.first
                 ) {
                     Box(contentAlignment = Alignment.Center) {
@@ -132,7 +133,7 @@ fun ContactDetailsScreen(
                 if (currentContact.phoneNumbers.isNotEmpty()) {
                     Surface(
                         modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(22.dp),
+                        shape = Dimens.CardShape,
                         color = MaterialTheme.colorScheme.surface,
                         border = androidx.compose.foundation.BorderStroke(
                             1.dp,
@@ -140,7 +141,7 @@ fun ContactDetailsScreen(
                         )
                     ) {
                         Column(
-                            modifier = Modifier.padding(18.dp),
+                            modifier = Modifier.padding(Dimens.SpacingStandard),
                             verticalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
                             Text(
@@ -185,7 +186,7 @@ fun ContactDetailsScreen(
                 if (currentContact.emails.isNotEmpty()) {
                     Surface(
                         modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(22.dp),
+                        shape = Dimens.CardShape,
                         color = MaterialTheme.colorScheme.surface,
                         border = androidx.compose.foundation.BorderStroke(
                             1.dp,
@@ -193,7 +194,7 @@ fun ContactDetailsScreen(
                         )
                     ) {
                         Column(
-                            modifier = Modifier.padding(18.dp),
+                            modifier = Modifier.padding(Dimens.SpacingStandard),
                             verticalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
                             Text(
@@ -275,7 +276,7 @@ fun ContactDetailsScreen(
 fun PixelDetailCard(icon: ImageVector, label: String, value: String) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(22.dp),
+        shape = Dimens.CardShape,
         color = MaterialTheme.colorScheme.surface,
         border = androidx.compose.foundation.BorderStroke(
             1.dp,
@@ -285,7 +286,7 @@ fun PixelDetailCard(icon: ImageVector, label: String, value: String) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(18.dp),
+                .padding(Dimens.SpacingStandard),
             horizontalArrangement = Arrangement.spacedBy(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {

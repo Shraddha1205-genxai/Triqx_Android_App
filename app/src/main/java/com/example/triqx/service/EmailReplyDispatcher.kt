@@ -1,9 +1,11 @@
 package com.example.triqx.service
 
 import android.util.Log
-import com.example.triqx.auth.GmailOAuthManager
 import com.example.triqx.data.local.EmailAccountStore
-import com.example.triqx.data.remote.GmailApiService
+import com.example.triqx.service.email.EmailProvider
+import com.example.triqx.service.email.EmailService
+import com.example.triqx.service.email.GmailEmailService
+import com.example.triqx.service.email.OutlookEmailService
 import com.example.triqx.utils.EmailUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -11,17 +13,29 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * High-level dispatcher for sending email replies via connected OAuth accounts.
+ * High-level dispatcher for sending email replies polymorphically via connected OAuth email services.
  */
 @Singleton
 class EmailReplyDispatcher @Inject constructor(
     private val emailAccountStore: EmailAccountStore,
-    private val gmailOAuthManager: GmailOAuthManager,
-    private val gmailApiService: GmailApiService
+    private val gmailEmailService: GmailEmailService,
+    private val outlookEmailService: OutlookEmailService
 ) {
 
     companion object {
         private const val TAG = "EmailReplyDispatcher"
+    }
+
+    private val services: List<EmailService> by lazy {
+        listOf(gmailEmailService, outlookEmailService)
+    }
+
+    fun getServiceForPackage(packageName: String): EmailService? {
+        return services.firstOrNull { it.canHandle(packageName) }
+    }
+
+    fun getServiceForProvider(provider: EmailProvider): EmailService? {
+        return services.firstOrNull { it.provider == provider }
     }
 
     /**
@@ -33,13 +47,13 @@ class EmailReplyDispatcher @Inject constructor(
     }
 
     /**
-     * Dispatches a reply to an email via the appropriate connected email API.
+     * Dispatches a reply to an email via the appropriate connected email API (Gmail, Microsoft Graph).
      *
      * @param recipientEmail Clean email address of the recipient (e.g. sender of incoming email)
      * @param subject Original subject or thread title
      * @param replyText Body of the reply
-     * @param packageName Originating package (e.g. "com.google.android.gm")
-     * @param accountEmail User's email account that originally received the email (e.g. "raj.harsh2001@gmail.com")
+     * @param packageName Originating package (e.g. "com.google.android.gm" or "com.microsoft.office.outlook")
+     * @param accountEmail User's email account that originally received the email
      * @return Result indicating success with message ID, or failure
      */
     suspend fun sendReply(
@@ -58,47 +72,30 @@ class EmailReplyDispatcher @Inject constructor(
             return@withContext Result.failure(IllegalArgumentException(error))
         }
 
-        // Look up the specific account that received the message, with fallback to primary
-        val account = emailAccountStore.getAccount(cleanAccount) ?: emailAccountStore.getGmailAccount()
+        val service = getServiceForPackage(packageName)
+            ?: return@withContext Result.failure(IllegalArgumentException("Unsupported email application package: $packageName"))
+
+        // Look up the specific account that received the message, with fallback to primary of that provider
+        val account = emailAccountStore.getAccount(cleanAccount, service.provider)
+            ?: emailAccountStore.getAccount(null, service.provider)
+
         if (account == null || !account.isConnected) {
+            val providerName = service.provider.displayName
             val error = if (!cleanAccount.isNullOrBlank()) {
-                "Gmail account '$cleanAccount' is not connected. Please connect it in Settings."
+                "$providerName account '$cleanAccount' is not connected. Please connect it in Settings."
             } else {
-                "Gmail account not connected. Please connect your Google account in Settings."
+                "$providerName account is not connected. Please connect your account in Settings."
             }
             Log.e(TAG, error)
             return@withContext Result.failure(IllegalStateException(error))
         }
 
-        val accessToken = gmailOAuthManager.getValidAccessToken(account.emailAddress)
-        if (accessToken.isNullOrBlank()) {
-            val error = "Failed to obtain valid Gmail OAuth access token for ${account.emailAddress}."
-            Log.e(TAG, error)
-            return@withContext Result.failure(IllegalStateException(error))
-        }
-
-        val senderDisplayName = account.displayName?.ifBlank { null }
-            ?: gmailOAuthManager.getSignedInDisplayName(account.emailAddress)
-
-        // Resolve parent thread and Message-ID metadata from Gmail API
-        val threadInfo = gmailApiService.resolveThreadInfo(accessToken, cleanRecipient, subject)
-
-        val baseSubject = threadInfo?.originalSubject?.ifBlank { null } ?: subject
-        val formattedSubject = when {
-            baseSubject.isNullOrBlank() -> "Re: Email"
-            baseSubject.startsWith("Re:", ignoreCase = true) -> baseSubject
-            else -> "Re: $baseSubject"
-        }
-
-        Log.i(TAG, "Sending email reply to $cleanRecipient (from: ${account.emailAddress}, name: '$senderDisplayName', subject: '$formattedSubject', threadId: ${threadInfo?.threadId})")
-        return@withContext gmailApiService.sendEmail(
-            accessToken = accessToken,
-            fromEmail = account.emailAddress,
-            fromDisplayName = senderDisplayName,
-            toEmail = cleanRecipient,
-            subject = formattedSubject,
-            bodyText = replyText,
-            threadInfo = threadInfo
+        Log.i(TAG, "Dispatching reply via ${service.provider.name} for $cleanRecipient from ${account.emailAddress}")
+        service.sendReply(
+            account = account,
+            recipientEmail = cleanRecipient,
+            subject = subject,
+            replyText = replyText
         )
     }
 }

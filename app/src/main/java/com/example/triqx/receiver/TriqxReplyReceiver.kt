@@ -115,9 +115,9 @@ class TriqxReplyReceiver : BroadcastReceiver() {
                         )
                         sent = apiResult.isSuccess
                         if (sent) {
-                            Log.i(TAG, "Reply sent successfully via Gmail API to $cleanEmail from $targetReceiver ($groupKey)")
+                            Log.i(TAG, "Reply sent successfully via Email API to $cleanEmail from $targetReceiver ($groupKey, pkg: $packageName)")
                         } else {
-                            Log.w(TAG, "Gmail API reply failed: ${apiResult.exceptionOrNull()?.message}")
+                            Log.w(TAG, "Email API reply failed: ${apiResult.exceptionOrNull()?.message}")
                         }
                     }
                 }

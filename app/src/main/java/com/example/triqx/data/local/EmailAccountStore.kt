@@ -8,6 +8,7 @@ import androidx.security.crypto.MasterKey
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
+import com.example.triqx.service.email.EmailProvider
 import com.example.triqx.utils.EmailUtils
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -216,25 +217,59 @@ class EmailAccountStore @Inject constructor(
         Log.i(TAG, "Disconnected all Gmail accounts.")
     }
 
-    fun getAccount(emailAddress: String? = null): EmailAccountEntity? {
-        val accounts = _connectedAccounts.value
-        if (accounts.isEmpty()) return null
-        if (emailAddress.isNullOrBlank()) return accounts.firstOrNull()
-        val clean = EmailUtils.cleanEmail(emailAddress) ?: emailAddress.trim()
-        return accounts.firstOrNull { it.emailAddress.equals(clean, ignoreCase = true) }
-            ?: accounts.firstOrNull()
+    fun getAccountsForProvider(provider: EmailProvider): List<EmailAccountEntity> {
+        return _connectedAccounts.value.filter { it.emailProvider == provider }
     }
 
-    fun getGmailAccount(): EmailAccountEntity? = getAccount(null)
+    fun getAccount(emailAddress: String? = null, provider: EmailProvider? = null): EmailAccountEntity? {
+        val accounts = _connectedAccounts.value
+        if (accounts.isEmpty()) return null
+        if (emailAddress.isNullOrBlank()) {
+            return if (provider != null) {
+                accounts.firstOrNull { it.emailProvider == provider }
+            } else {
+                accounts.firstOrNull()
+            }
+        }
+        val clean = EmailUtils.cleanEmail(emailAddress) ?: emailAddress.trim()
+        return accounts.firstOrNull { account ->
+            account.emailAddress.equals(clean, ignoreCase = true) &&
+                (provider == null || account.emailProvider == provider)
+        } ?: accounts.firstOrNull { it.emailAddress.equals(clean, ignoreCase = true) }
+          ?: if (provider != null) accounts.firstOrNull { it.emailProvider == provider } else accounts.firstOrNull()
+    }
 
-    fun isGmailConnected(): Boolean = _connectedAccounts.value.isNotEmpty()
+    fun getGmailAccount(): EmailAccountEntity? = getAccount(null, EmailProvider.GMAIL)
+
+    fun getOutlookAccount(): EmailAccountEntity? = getAccount(null, EmailProvider.OUTLOOK)
+
+    fun isGmailConnected(): Boolean = _connectedAccounts.value.any { it.emailProvider == EmailProvider.GMAIL }
+
+    fun isOutlookConnected(): Boolean = _connectedAccounts.value.any { it.emailProvider == EmailProvider.OUTLOOK }
+
+    @Synchronized
+    fun disconnectAccountsForProvider(provider: EmailProvider) {
+        val current = _connectedAccounts.value.toMutableList()
+        current.removeAll { it.emailProvider == provider }
+        persistAccounts(current)
+        Log.i(TAG, "Disconnected all accounts for provider ${provider.name}. Remaining: ${current.size}")
+    }
 
     fun hasAccountFor(packageName: String, targetEmail: String? = null): Boolean {
-        if (packageName.contains("gm", ignoreCase = true) || packageName == "com.google.android.gm") {
-            if (targetEmail.isNullOrBlank()) return isGmailConnected()
-            val clean = EmailUtils.cleanEmail(targetEmail) ?: targetEmail.trim()
-            return _connectedAccounts.value.any { it.emailAddress.equals(clean, ignoreCase = true) }
+        val provider = EmailProvider.fromPackageName(packageName)
+        val accounts = _connectedAccounts.value
+        if (accounts.isEmpty()) return false
+
+        val clean = targetEmail?.let { EmailUtils.cleanEmail(it) ?: it.trim() }
+
+        return if (provider != null) {
+            if (clean.isNullOrBlank()) {
+                accounts.any { it.emailProvider == provider }
+            } else {
+                accounts.any { it.emailProvider == provider && it.emailAddress.equals(clean, ignoreCase = true) }
+            }
+        } else {
+            if (clean.isNullOrBlank()) false else accounts.any { it.emailAddress.equals(clean, ignoreCase = true) }
         }
-        return false
     }
 }

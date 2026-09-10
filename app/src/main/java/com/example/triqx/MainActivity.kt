@@ -29,6 +29,11 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.example.triqx.data.local.UserSessionManager
+import com.example.triqx.ui.auth.LoginScreen
+import com.example.triqx.ui.auth.LoginViewModel
+import com.example.triqx.ui.auth.ProfileSetupScreen
+import com.example.triqx.ui.auth.ProfileSetupViewModel
 import com.example.triqx.ui.apps.AppSelectionScreen
 import com.example.triqx.ui.apps.ImportantAppsScreen
 import com.example.triqx.ui.contacts.ContactDetailsScreen
@@ -51,6 +56,7 @@ import javax.inject.Inject
 class MainActivity : ComponentActivity() {
 
     @Inject lateinit var gmailOAuthManager: com.example.triqx.auth.GmailOAuthManager
+    @Inject lateinit var userSessionManager: UserSessionManager
 
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -77,6 +83,17 @@ class MainActivity : ComponentActivity() {
                 val navController = rememberNavController()
                 val navBackStackEntry by navController.currentBackStackEntryAsState()
                 val currentRoute = navBackStackEntry?.destination?.route
+
+                val isLoggedIn by userSessionManager.isLoggedIn.collectAsState()
+                val userProfile by userSessionManager.userProfile.collectAsState()
+
+                val initialDestination = remember(isLoggedIn, userProfile?.isFirstLogin) {
+                    when {
+                        !isLoggedIn -> "login"
+                        userProfile?.isFirstLogin != false -> "profile_setup"
+                        else -> "home"
+                    }
+                }
 
                 val settingsViewModel: SettingsViewModel = hiltViewModel()
                 val showDebugMenu by settingsViewModel.showDebugMenu.collectAsState()
@@ -105,16 +122,46 @@ class MainActivity : ComponentActivity() {
                 ) { innerPadding ->
                     NavHost(
                         navController = navController,
-                        startDestination = "home",
+                        startDestination = initialDestination,
                         modifier = Modifier
                             .fillMaxSize()
                             .padding(bottom = innerPadding.calculateBottomPadding())
                     ) {
+                        composable("login") {
+                            val loginViewModel: LoginViewModel = hiltViewModel()
+                            LoginScreen(
+                                viewModel = loginViewModel,
+                                onLoginSuccess = { isFirstLogin ->
+                                    if (isFirstLogin) {
+                                        navController.navigate("profile_setup") {
+                                            popUpTo("login") { inclusive = true }
+                                        }
+                                    } else {
+                                        navController.navigate("home") {
+                                            popUpTo("login") { inclusive = true }
+                                        }
+                                    }
+                                }
+                            )
+                        }
+                        composable("profile_setup") {
+                            val profileViewModel: ProfileSetupViewModel = hiltViewModel()
+                            ProfileSetupScreen(
+                                viewModel = profileViewModel,
+                                onSetupComplete = {
+                                    navController.navigate("home") {
+                                        popUpTo("profile_setup") { inclusive = true }
+                                    }
+                                }
+                            )
+                        }
                         composable("home") {
                             val scope = rememberCoroutineScope()
                             val notificationViewModel: NotificationViewModel = hiltViewModel()
                             HomeScreen(
                                 viewModel = notificationViewModel,
+                                userInitials = userProfile?.initials ?: "U",
+                                onNavigateToSettings = { navController.navigate("settings") },
                                 onConversationClick = { groupKey ->
                                     val encoded = Uri.encode(groupKey)
                                     navController.navigate("chat/$encoded")
@@ -209,7 +256,14 @@ class MainActivity : ComponentActivity() {
                             )
                         }
                         composable("settings") {
-                            SettingsScreen(viewModel = settingsViewModel)
+                            SettingsScreen(
+                                viewModel = settingsViewModel,
+                                onLogout = {
+                                    navController.navigate("login") {
+                                        popUpTo(0) { inclusive = true }
+                                    }
+                                }
+                            )
                         }
                         composable(
                             route = "notification_details/{notificationId}",

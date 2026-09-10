@@ -119,7 +119,7 @@ class TriqxNotificationListenerService : NotificationListenerService() {
      * Determines if a given conversation has an available reply action.
      */
     fun canReply(conversationKey: String, notificationKey: String? = null): Boolean {
-        if (isEmailApp(conversationKey) && emailAccountStore.isGmailConnected()) return true
+        if (isEmailApp(conversationKey) && (emailAccountStore.isGmailConnected() || emailAccountStore.isOutlookConnected())) return true
         if (replyActionStore.canReply(conversationKey)) return true
         if (notificationKey != null && activeNotifications?.any { it.key == notificationKey && hasReplyAction(it.notification) } == true) return true
         return findActionInActiveByConversationKey(conversationKey) != null

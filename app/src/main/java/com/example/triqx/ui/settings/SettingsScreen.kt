@@ -6,7 +6,6 @@ import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -15,44 +14,51 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.BugReport
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Email
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Key
-import androidx.compose.material.icons.filled.Notifications
-import androidx.compose.material.icons.filled.Tune
-import androidx.compose.material.icons.filled.Visibility
-import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import com.example.triqx.data.local.EmailAccountEntity
+import com.example.triqx.service.email.EmailProvider
+import com.example.triqx.ui.components.TriqxCard
+import com.example.triqx.ui.profile.EditProfileDialog
+import com.example.triqx.ui.theme.Dimens
+import com.example.triqx.ui.theme.PixelAvatarColors
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(viewModel: SettingsViewModel) {
+fun SettingsScreen(
+    viewModel: SettingsViewModel,
+    onLogout: () -> Unit = {}
+) {
     val context = LocalContext.current
+    val userProfile by viewModel.userProfile.collectAsState()
+    var showEditProfileDialog by remember { mutableStateOf(false) }
+    var showAiConfigDialog by remember { mutableStateOf(false) }
+    var showLogoutConfirmDialog by remember { mutableStateOf(false) }
+    var managingAccount by remember { mutableStateOf<EmailAccountEntity?>(null) }
+
     val savedApiKey by viewModel.apiKey.collectAsState()
     val savedModel by viewModel.selectedModel.collectAsState()
     val isTesting by viewModel.isTesting.collectAsState()
     val testResult by viewModel.testResult.collectAsState()
     val showDebugMenu by viewModel.showDebugMenu.collectAsState()
     val notificationReplyStyle by viewModel.notificationReplyStyle.collectAsState()
-    val gmailAccount by viewModel.gmailAccount.collectAsState()
-    val connectedAccounts by viewModel.connectedAccounts.collectAsState()
+    val gmailAccounts by viewModel.gmailAccounts.collectAsState()
+    val outlookAccounts by viewModel.outlookAccounts.collectAsState()
     val authStatus by viewModel.authStatus.collectAsState()
 
-    var isPreparingAuth by remember { mutableStateOf(false) }
+    var isPreparingProvider by remember { mutableStateOf<EmailProvider?>(null) }
 
     val googleAuthLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
@@ -65,11 +71,18 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
         }
     }
 
+    val outlookAuthLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val data = result.data
+        if (data != null) {
+            viewModel.handleOutlookAuthResult(data)
+        }
+    }
+
     var apiKeyInput by remember(savedApiKey) { mutableStateOf(savedApiKey) }
     var passwordVisible by remember { mutableStateOf(false) }
     var expandedModelMenu by remember { mutableStateOf(false) }
-    var showEditSenderNameDialog by remember { mutableStateOf(false) }
-    var editingAccountEmail by remember { mutableStateOf<String?>(null) }
     var senderNameInput by remember { mutableStateOf("") }
 
     val availableModels = listOf("gpt-4o-mini", "gpt-4o", "gpt-3.5-turbo")
@@ -84,8 +97,9 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
                 .padding(top = innerPadding.calculateTopPadding())
                 .statusBarsPadding()
                 .verticalScroll(rememberScrollState())
-                .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 80.dp),
-            verticalArrangement = Arrangement.spacedBy(18.dp)
+                .padding(horizontal = Dimens.SpacingStandard, vertical = Dimens.SpacingSmall)
+                .padding(bottom = 80.dp),
+            verticalArrangement = Arrangement.spacedBy(Dimens.SpacingMedium)
         ) {
             // Header Title
             Text(
@@ -93,640 +107,421 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
                 style = MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.padding(start = 4.dp, top = 8.dp)
+                modifier = Modifier.padding(start = 4.dp, top = 4.dp, bottom = 4.dp)
             )
 
-            // Section 1: AI SMART REPLIES
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    text = "AI SMART REPLIES",
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary,
-                    letterSpacing = 1.sp,
-                    modifier = Modifier.padding(start = 4.dp)
-                )
-
-                Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(18.dp),
-                    color = MaterialTheme.colorScheme.surfaceContainerLow,
-                    tonalElevation = 1.dp
+            // Minimal User Profile Card
+            if (userProfile != null) {
+                val profile = userProfile!!
+                val avatarColors = remember(profile.fullName) {
+                    PixelAvatarColors.getColorsForName(profile.fullName.ifBlank { "User" })
+                }
+                TriqxCard(
+                    onClick = { showEditProfileDialog = true },
+                    contentPadding = PaddingValues(horizontal = Dimens.SpacingStandard, vertical = Dimens.SpacingMedium)
                 ) {
-                    Column(
-                        modifier = Modifier.padding(18.dp),
-                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(Dimens.SpacingMedium)
+                    ) {
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clip(CircleShape)
+                                .background(avatarColors.first)
+                        ) {
+                            Text(
+                                text = profile.initials,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = avatarColors.second
+                            )
+                        }
+
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = profile.fullName,
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            val subtitle = when {
+                                profile.professionalDetails.isNotBlank() -> profile.professionalDetails
+                                profile.primaryPhone.isNotBlank() -> profile.primaryPhone
+                                else -> "Tap to edit profile"
+                            }
+                            Text(
+                                text = subtitle,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+
+                        IconButton(
+                            onClick = { showEditProfileDialog = true },
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Edit,
+                                contentDescription = "Edit Profile",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Section 1: AI Model & Key
+            MinimalSectionTitle("AI Model & Key")
+            TriqxCard(
+                onClick = {
+                    apiKeyInput = savedApiKey
+                    showAiConfigDialog = true
+                },
+                contentPadding = PaddingValues(horizontal = Dimens.SpacingStandard, vertical = Dimens.SpacingMedium)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(Dimens.SpacingMedium),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Surface(
+                            modifier = Modifier.size(36.dp),
+                            shape = Dimens.BadgeShape,
+                            color = MaterialTheme.colorScheme.primaryContainer
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.SmartToy,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+
+                        Column {
+                            Text(
+                                text = "OpenAI API",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            val statusText = if (savedApiKey.isNotBlank()) {
+                                "$savedModel • Configured"
+                            } else {
+                                "Tap to set API key"
+                            }
+                            Text(
+                                text = statusText,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (savedApiKey.isNotBlank()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    Icon(
+                        imageVector = Icons.Default.ChevronRight,
+                        contentDescription = "Configure",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+
+            // Section 2: Email Accounts (Redesigned clean, uncluttered list)
+            MinimalSectionTitle("Email Accounts")
+            TriqxCard(
+                contentPadding = PaddingValues(vertical = Dimens.SpacingMicro)
+            ) {
+                Column {
+                    // Gmail Section
+                    if (gmailAccounts.isEmpty()) {
+                        ProviderConnectRow(
+                            name = "Gmail",
+                            iconColor = MaterialTheme.colorScheme.tertiaryContainer,
+                            iconTint = MaterialTheme.colorScheme.onTertiaryContainer,
+                            isPreparing = isPreparingProvider == EmailProvider.GMAIL,
+                            onConnect = {
+                                isPreparingProvider = EmailProvider.GMAIL
+                                viewModel.prepareGoogleAuthIntent(
+                                    onReady = { intent ->
+                                        isPreparingProvider = null
+                                        try {
+                                            googleAuthLauncher.launch(intent)
+                                        } catch (e: Exception) {
+                                            Toast.makeText(context, "Error: ${e.message}", Toast.LENGTH_SHORT).show()
+                                        }
+                                    },
+                                    onError = { isPreparingProvider = null }
+                                )
+                            }
+                        )
+                    } else {
+                        gmailAccounts.forEachIndexed { index, account ->
+                            if (index > 0) {
+                                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f))
+                            }
+                            ConnectedAccountRow(
+                                account = account,
+                                providerName = "Gmail",
+                                iconColor = MaterialTheme.colorScheme.tertiaryContainer,
+                                iconTint = MaterialTheme.colorScheme.onTertiaryContainer,
+                                onClick = {
+                                    managingAccount = account
+                                    senderNameInput = account.displayName.orEmpty()
+                                }
+                            )
+                        }
+                        AddAnotherAccountButton(
+                            label = "Add another Gmail",
+                            isPreparing = isPreparingProvider == EmailProvider.GMAIL,
+                            onConnect = {
+                                isPreparingProvider = EmailProvider.GMAIL
+                                viewModel.prepareGoogleAuthIntent(
+                                    onReady = { intent ->
+                                        isPreparingProvider = null
+                                        try {
+                                            googleAuthLauncher.launch(intent)
+                                        } catch (e: Exception) {
+                                            Toast.makeText(context, "Error: ${e.message}", Toast.LENGTH_SHORT).show()
+                                        }
+                                    },
+                                    onError = { isPreparingProvider = null }
+                                )
+                            }
+                        )
+                    }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f))
+
+                    // Outlook Section
+                    if (outlookAccounts.isEmpty()) {
+                        ProviderConnectRow(
+                            name = "Outlook",
+                            iconColor = MaterialTheme.colorScheme.secondaryContainer,
+                            iconTint = MaterialTheme.colorScheme.onSecondaryContainer,
+                            isPreparing = isPreparingProvider == EmailProvider.OUTLOOK,
+                            onConnect = {
+                                isPreparingProvider = EmailProvider.OUTLOOK
+                                viewModel.prepareOutlookAuthIntent(
+                                    onReady = { intent ->
+                                        isPreparingProvider = null
+                                        try {
+                                            outlookAuthLauncher.launch(intent)
+                                        } catch (e: Exception) {
+                                            Toast.makeText(context, "Error: ${e.message}", Toast.LENGTH_SHORT).show()
+                                        }
+                                    },
+                                    onError = { isPreparingProvider = null }
+                                )
+                            }
+                        )
+                    } else {
+                        outlookAccounts.forEachIndexed { index, account ->
+                            if (index > 0) {
+                                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f))
+                            }
+                            ConnectedAccountRow(
+                                account = account,
+                                providerName = "Outlook",
+                                iconColor = MaterialTheme.colorScheme.secondaryContainer,
+                                iconTint = MaterialTheme.colorScheme.onSecondaryContainer,
+                                onClick = {
+                                    managingAccount = account
+                                    senderNameInput = account.displayName.orEmpty()
+                                }
+                            )
+                        }
+                        AddAnotherAccountButton(
+                            label = "Add another Outlook",
+                            isPreparing = isPreparingProvider == EmailProvider.OUTLOOK,
+                            onConnect = {
+                                isPreparingProvider = EmailProvider.OUTLOOK
+                                viewModel.prepareOutlookAuthIntent(
+                                    onReady = { intent ->
+                                        isPreparingProvider = null
+                                        try {
+                                            outlookAuthLauncher.launch(intent)
+                                        } catch (e: Exception) {
+                                            Toast.makeText(context, "Error: ${e.message}", Toast.LENGTH_SHORT).show()
+                                        }
+                                    },
+                                    onError = { isPreparingProvider = null }
+                                )
+                            }
+                        )
+                    }
+                }
+            }
+
+            // Auth status banner if any
+            if (authStatus != null) {
+                Surface(
+                    shape = Dimens.CardShape,
+                    color = if (authStatus?.startsWith("Error") == true) {
+                        MaterialTheme.colorScheme.errorContainer
+                    } else {
+                        MaterialTheme.colorScheme.primaryContainer
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = Dimens.SpacingMedium, vertical = Dimens.SpacingSmall),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(Dimens.SpacingSmall)
+                    ) {
+                        Text(
+                            text = authStatus ?: "",
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.weight(1f)
+                        )
+                        IconButton(
+                            onClick = { viewModel.clearAuthStatus() },
+                            modifier = Modifier.size(20.dp)
+                        ) {
+                            Icon(Icons.Default.Close, contentDescription = "Dismiss", modifier = Modifier.size(14.dp))
+                        }
+                    }
+                }
+            }
+
+            // Section 3: Reply Style
+            MinimalSectionTitle("Reply Style")
+            TriqxCard(
+                contentPadding = PaddingValues(Dimens.SpacingSmall)
+            ) {
+                Column {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable { viewModel.setNotificationReplyStyle("body_numbered") }
+                            .padding(horizontal = Dimens.SpacingMedium, vertical = Dimens.SpacingSmall),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(Dimens.SpacingSmall)
+                    ) {
+                        RadioButton(
+                            selected = (notificationReplyStyle == "body_numbered"),
+                            onClick = { viewModel.setNotificationReplyStyle("body_numbered") }
+                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Full text in body",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = "Numbered actions (1, 2, 3)",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable { viewModel.setNotificationReplyStyle("chips_native") }
+                            .padding(horizontal = Dimens.SpacingMedium, vertical = Dimens.SpacingSmall),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(Dimens.SpacingSmall)
+                    ) {
+                        RadioButton(
+                            selected = (notificationReplyStyle == "chips_native"),
+                            onClick = { viewModel.setNotificationReplyStyle("chips_native") }
+                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Native action chips",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = "Interactive reply pills",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Section 4: Preferences
+            MinimalSectionTitle("Preferences")
+            TriqxCard(
+                contentPadding = PaddingValues(horizontal = Dimens.SpacingStandard, vertical = Dimens.SpacingSmall)
+            ) {
+                Column {
+                    // Notification Permission row
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = Dimens.SpacingSmall),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(14.dp)
+                            horizontalArrangement = Arrangement.spacedBy(Dimens.SpacingMedium)
                         ) {
-                            Surface(
-                                modifier = Modifier.size(42.dp),
-                                shape = RoundedCornerShape(12.dp),
-                                color = MaterialTheme.colorScheme.primaryContainer
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        Icons.Default.Tune,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                                        modifier = Modifier.size(22.dp)
-                                    )
-                                }
-                            }
-                            Column {
-                                Text(
-                                    text = "OpenAI Smart Engine",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Text(
-                                    text = "Generates 3 context-aware reply options",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
-
-                        // API Key Input
-                        OutlinedTextField(
-                            value = apiKeyInput,
-                            onValueChange = { apiKeyInput = it },
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(14.dp),
-                            label = { Text("OpenAI API Key") },
-                            placeholder = { Text("sk-...") },
-                            leadingIcon = { Icon(Icons.Default.Key, contentDescription = null) },
-                            trailingIcon = {
-                                IconButton(onClick = { passwordVisible = !passwordVisible }) {
-                                    Icon(
-                                        imageVector = if (passwordVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                                        contentDescription = if (passwordVisible) "Hide Key" else "Show Key"
-                                    )
-                                }
-                            },
-                            visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                            singleLine = true
-                        )
-
-                        // Model Dropdown
-                        ExposedDropdownMenuBox(
-                            expanded = expandedModelMenu,
-                            onExpandedChange = { expandedModelMenu = !expandedModelMenu }
-                        ) {
-                            OutlinedTextField(
-                                value = savedModel,
-                                onValueChange = {},
-                                readOnly = true,
-                                shape = RoundedCornerShape(14.dp),
-                                label = { Text("AI Model") },
-                                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expandedModelMenu) },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable, true)
-                            )
-                            ExposedDropdownMenu(
-                                expanded = expandedModelMenu,
-                                onDismissRequest = { expandedModelMenu = false },
-                                shape = RoundedCornerShape(14.dp)
-                            ) {
-                                availableModels.forEach { modelName ->
-                                    DropdownMenuItem(
-                                        text = { Text(modelName, fontWeight = if (modelName == savedModel) FontWeight.Bold else FontWeight.Normal) },
-                                        onClick = {
-                                            viewModel.saveModel(modelName)
-                                            expandedModelMenu = false
-                                        }
-                                    )
-                                }
-                            }
-                        }
-
-                        // Buttons
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            Button(
-                                onClick = { viewModel.saveApiKey(apiKeyInput) },
-                                shape = RoundedCornerShape(12.dp),
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(46.dp)
-                            ) {
-                                Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Save Key", fontWeight = FontWeight.Bold)
-                            }
-
-                            OutlinedButton(
-                                onClick = { viewModel.testConnection(apiKeyInput, savedModel) },
-                                enabled = apiKeyInput.isNotBlank() && !isTesting,
-                                shape = RoundedCornerShape(12.dp),
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(46.dp)
-                            ) {
-                                if (isTesting) {
-                                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text("Testing...")
-                                } else {
-                                    Text("Test Connection", fontWeight = FontWeight.Bold)
-                                }
-                            }
-                        }
-
-                        // Result feedback banner
-                        if (testResult != null) {
-                            Surface(
-                                shape = RoundedCornerShape(12.dp),
-                                color = if (testResult?.startsWith("Error") == true) {
-                                    MaterialTheme.colorScheme.errorContainer
-                                } else {
-                                    MaterialTheme.colorScheme.primaryContainer
-                                },
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Text(
-                                    text = testResult ?: "",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (testResult?.startsWith("Error") == true) {
-                                        MaterialTheme.colorScheme.onErrorContainer
-                                    } else {
-                                        MaterialTheme.colorScheme.onPrimaryContainer
-                                    },
-                                    modifier = Modifier.padding(12.dp)
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Section 2: CONNECTED EMAIL ACCOUNTS (API OAUTH)
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    text = "CONNECTED EMAIL ACCOUNTS",
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary,
-                    letterSpacing = 1.sp,
-                    modifier = Modifier.padding(start = 4.dp)
-                )
-
-                Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(18.dp),
-                    color = MaterialTheme.colorScheme.surfaceContainerLow,
-                    tonalElevation = 1.dp
-                ) {
-                    Column(
-                        modifier = Modifier.padding(18.dp),
-                        verticalArrangement = Arrangement.spacedBy(16.dp)
-                    ) {
-                        if (connectedAccounts.isEmpty()) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(14.dp)
-                            ) {
-                                Surface(
-                                    modifier = Modifier.size(42.dp),
-                                    shape = RoundedCornerShape(12.dp),
-                                    color = MaterialTheme.colorScheme.tertiaryContainer
-                                ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Icon(
-                                            Icons.Default.Email,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.onTertiaryContainer,
-                                            modifier = Modifier.size(22.dp)
-                                        )
-                                    }
-                                }
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = "Google / Gmail",
-                                        style = MaterialTheme.typography.titleMedium,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                    Text(
-                                        text = "Enables 1-stage AI replies for Gmail",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-
-                                Button(
-                                    onClick = {
-                                        isPreparingAuth = true
-                                        viewModel.prepareGoogleAuthIntent(
-                                            onReady = { intent ->
-                                                isPreparingAuth = false
-                                                try {
-                                                    googleAuthLauncher.launch(intent)
-                                                } catch (e: Exception) {
-                                                    Toast.makeText(context, "Error launching Google auth: ${e.message}", Toast.LENGTH_LONG).show()
-                                                }
-                                            },
-                                            onError = {
-                                                isPreparingAuth = false
-                                            }
-                                        )
-                                    },
-                                    enabled = !isPreparingAuth,
-                                    shape = RoundedCornerShape(12.dp)
-                                ) {
-                                    if (isPreparingAuth) {
-                                        CircularProgressIndicator(
-                                            modifier = Modifier.size(16.dp),
-                                            strokeWidth = 2.dp,
-                                            color = MaterialTheme.colorScheme.onPrimary
-                                        )
-                                    } else {
-                                        Text("Connect", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                                    }
-                                }
-                            }
-                        } else {
-                            connectedAccounts.forEachIndexed { index, account ->
-                                if (index > 0) {
-                                    HorizontalDivider(
-                                        modifier = Modifier.padding(vertical = 4.dp),
-                                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
-                                    )
-                                }
-                                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(14.dp)
-                                    ) {
-                                        Surface(
-                                            modifier = Modifier.size(42.dp),
-                                            shape = RoundedCornerShape(12.dp),
-                                            color = MaterialTheme.colorScheme.tertiaryContainer
-                                        ) {
-                                            Box(contentAlignment = Alignment.Center) {
-                                                Icon(
-                                                    Icons.Default.Email,
-                                                    contentDescription = null,
-                                                    tint = MaterialTheme.colorScheme.onTertiaryContainer,
-                                                    modifier = Modifier.size(22.dp)
-                                                )
-                                            }
-                                        }
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(
-                                                text = account.emailAddress,
-                                                style = MaterialTheme.typography.titleSmall,
-                                                fontWeight = FontWeight.Bold
-                                            )
-                                            Text(
-                                                text = "Connected for 1-stage AI replies",
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = MaterialTheme.colorScheme.primary
-                                            )
-                                        }
-
-                                        OutlinedButton(
-                                            onClick = { viewModel.disconnectAccount(account.emailAddress) },
-                                            shape = RoundedCornerShape(12.dp),
-                                            colors = ButtonDefaults.outlinedButtonColors(
-                                                contentColor = MaterialTheme.colorScheme.error
-                                            )
-                                        ) {
-                                            Text("Disconnect", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                                        }
-                                    }
-
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .background(
-                                                color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.5f),
-                                                shape = RoundedCornerShape(10.dp)
-                                            )
-                                            .padding(horizontal = 12.dp, vertical = 8.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.SpaceBetween
-                                    ) {
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(
-                                                text = "Sender Name (displayed on replies)",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
-                                            Text(
-                                                text = account.displayName?.ifBlank { null } ?: "Not set (uses email)",
-                                                style = MaterialTheme.typography.bodyMedium,
-                                                fontWeight = FontWeight.SemiBold,
-                                                color = MaterialTheme.colorScheme.onSurface
-                                            )
-                                        }
-                                        TextButton(
-                                            onClick = {
-                                                editingAccountEmail = account.emailAddress
-                                                senderNameInput = account.displayName.orEmpty()
-                                                showEditSenderNameDialog = true
-                                            }
-                                        ) {
-                                            Text("Edit")
-                                        }
-                                    }
-                                }
-                            }
-
-                            OutlinedButton(
-                                onClick = {
-                                    isPreparingAuth = true
-                                    viewModel.prepareGoogleAuthIntent(
-                                        onReady = { intent ->
-                                            isPreparingAuth = false
-                                            try {
-                                                googleAuthLauncher.launch(intent)
-                                            } catch (e: Exception) {
-                                                Toast.makeText(context, "Error launching Google auth: ${e.message}", Toast.LENGTH_LONG).show()
-                                            }
-                                        },
-                                        onError = {
-                                            isPreparingAuth = false
-                                        }
-                                    )
-                                },
-                                enabled = !isPreparingAuth,
-                                shape = RoundedCornerShape(12.dp),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                if (isPreparingAuth) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(16.dp),
-                                        strokeWidth = 2.dp,
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text("Opening Google Account Picker...", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                                } else {
-                                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text("Add Another Google Account", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                                }
-                            }
-                        }
-
-                        if (authStatus != null) {
-                            Surface(
-                                shape = RoundedCornerShape(12.dp),
-                                color = if (authStatus?.startsWith("Error") == true) {
-                                    MaterialTheme.colorScheme.errorContainer
-                                } else {
-                                    MaterialTheme.colorScheme.primaryContainer
-                                },
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(12.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    Text(
-                                        text = authStatus ?: "",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        fontWeight = FontWeight.Medium,
-                                        color = if (authStatus?.startsWith("Error") == true) {
-                                            MaterialTheme.colorScheme.onErrorContainer
-                                        } else {
-                                            MaterialTheme.colorScheme.onPrimaryContainer
-                                        },
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                    IconButton(
-                                        onClick = { viewModel.clearAuthStatus() },
-                                        modifier = Modifier.size(20.dp)
-                                    ) {
-                                        Icon(
-                                            Icons.Default.Close,
-                                            contentDescription = "Dismiss",
-                                            modifier = Modifier.size(14.dp)
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Section 3: NOTIFICATION ASSISTANT STYLE
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    text = "NOTIFICATION ASSISTANT STYLE",
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary,
-                    letterSpacing = 1.sp,
-                    modifier = Modifier.padding(start = 4.dp)
-                )
-
-                Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(18.dp),
-                    color = MaterialTheme.colorScheme.surfaceContainerLow,
-                    tonalElevation = 1.dp
-                ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        Text(
-                            text = "Choose how 3 AI Smart Replies are displayed in your Android notification shade:",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-
-                        // Option 1: Full-Text in Body + Numbered Actions
-                        Surface(
-                            shape = RoundedCornerShape(14.dp),
-                            color = if (notificationReplyStyle == "body_numbered") MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f) else MaterialTheme.colorScheme.surface,
-                            border = if (notificationReplyStyle == "body_numbered") BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary) else null,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { viewModel.setNotificationReplyStyle("body_numbered") }
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(14.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
-                                RadioButton(
-                                    selected = (notificationReplyStyle == "body_numbered"),
-                                    onClick = { viewModel.setNotificationReplyStyle("body_numbered") }
-                                )
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = "Approach 1: Full-Text Body + Numbered",
-                                        style = MaterialTheme.typography.titleSmall,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                    Text(
-                                        text = "Displays full multi-line replies in notification text with 1️⃣ 2️⃣ 3️⃣ quick send buttons.",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-                        }
-
-                        // Option 2: Native Smart Reply Chips
-                        Surface(
-                            shape = RoundedCornerShape(14.dp),
-                            color = if (notificationReplyStyle == "chips_native") MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f) else MaterialTheme.colorScheme.surface,
-                            border = if (notificationReplyStyle == "chips_native") BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary) else null,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { viewModel.setNotificationReplyStyle("chips_native") }
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(14.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
-                                RadioButton(
-                                    selected = (notificationReplyStyle == "chips_native"),
-                                    onClick = { viewModel.setNotificationReplyStyle("chips_native") }
-                                )
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = "Approach 3: Native Smart Reply Chips",
-                                        style = MaterialTheme.typography.titleSmall,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                    Text(
-                                        text = "Uses Android native pill chips (setChoices) inside the notification.",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Section 3: SYSTEM ACCESS
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    text = "SYSTEM ACCESS",
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary,
-                    letterSpacing = 1.sp,
-                    modifier = Modifier.padding(start = 4.dp)
-                )
-
-                Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(18.dp),
-                    color = MaterialTheme.colorScheme.surfaceContainerLow,
-                    tonalElevation = 1.dp
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(14.dp)
-                    ) {
-                        Surface(
-                            modifier = Modifier.size(42.dp),
-                            shape = RoundedCornerShape(12.dp),
-                            color = MaterialTheme.colorScheme.secondaryContainer
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    Icons.Default.Notifications,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.onSecondaryContainer,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
-                        }
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "Notification Listener",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold
+                            Icon(
+                                Icons.Default.Notifications,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(20.dp)
                             )
                             Text(
-                                text = "Manage Android system notification access",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                text = "Notification Access",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium
                             )
                         }
-                        Button(
+                        TextButton(
                             onClick = {
                                 val intent = Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
                                 context.startActivity(intent)
-                            },
-                            shape = RoundedCornerShape(12.dp)
+                            }
                         ) {
-                            Text("Open", fontWeight = FontWeight.Bold)
+                            Text("Open", fontWeight = FontWeight.SemiBold)
                         }
                     }
-                }
-            }
 
-            // Section 3: DEVELOPER OPTIONS
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    text = "DEVELOPER OPTIONS",
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary,
-                    letterSpacing = 1.sp,
-                    modifier = Modifier.padding(start = 4.dp)
-                )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f))
 
-                Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(18.dp),
-                    color = MaterialTheme.colorScheme.surfaceContainerLow,
-                    tonalElevation = 1.dp
-                ) {
+                    // Debug Tab row
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(16.dp),
+                            .padding(vertical = Dimens.SpacingSmall),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(14.dp)
+                        horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Surface(
-                            modifier = Modifier.size(42.dp),
-                            shape = RoundedCornerShape(12.dp),
-                            color = MaterialTheme.colorScheme.tertiaryContainer
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(Dimens.SpacingMedium)
                         ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    Icons.Default.BugReport,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.onTertiaryContainer,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
-                        }
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "Debug Menu",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold
+                            Icon(
+                                Icons.Default.BugReport,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(20.dp)
                             )
                             Text(
-                                text = "Show Debug tab in bottom navigation bar",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                text = "Debug Tab",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium
                             )
                         }
                         Switch(
@@ -737,90 +532,227 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
                 }
             }
 
-            // Section 4: ABOUT
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    text = "ABOUT",
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary,
-                    letterSpacing = 1.sp,
-                    modifier = Modifier.padding(start = 4.dp)
-                )
+            // Minimal Sign Out Button
+            Spacer(modifier = Modifier.height(Dimens.SpacingSmall))
 
-                Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(18.dp),
-                    color = MaterialTheme.colorScheme.surfaceContainerLow,
-                    tonalElevation = 1.dp
-                ) {
-                    Row(
-                        modifier = Modifier.padding(16.dp),
-                        horizontalArrangement = Arrangement.spacedBy(14.dp),
-                        verticalAlignment = Alignment.Top
-                    ) {
-                        Icon(
-                            Icons.Default.Info,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(24.dp)
-                        )
-                        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                            Text(
-                                text = "Triqx Priority Assistant",
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                text = "Triqx automatically aggregates conversations from designated VIP contacts and apps, generating intelligent 3-reply options powered by OpenAI.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                }
+            OutlinedButton(
+                onClick = { showLogoutConfirmDialog = true },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp),
+                shape = RoundedCornerShape(14.dp),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    contentColor = MaterialTheme.colorScheme.error
+                )
+            ) {
+                Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(Dimens.SpacingSmall))
+                Text("Sign Out", fontWeight = FontWeight.SemiBold)
             }
+
+            // App Version Footer
+            Text(
+                text = "Triqx v1.0",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = Dimens.SpacingMicro),
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+            )
         }
     }
 
-    if (showEditSenderNameDialog) {
+    // AI Configuration Dialog
+    if (showAiConfigDialog) {
         AlertDialog(
-            onDismissRequest = { showEditSenderNameDialog = false },
+            onDismissRequest = { showAiConfigDialog = false },
+            shape = Dimens.DialogShape,
             title = {
-                Text("Sender Display Name", fontWeight = FontWeight.Bold)
+                Text(
+                    text = "AI Configuration",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
             },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(
-                        text = if (editingAccountEmail != null) {
-                            "Recipients will see this name on emails sent from ${editingAccountEmail}:"
-                        } else {
-                            "Recipients will see this name on emails sent from Triqx (e.g. your full name):"
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(Dimens.SpacingMedium),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
                     OutlinedTextField(
-                        value = senderNameInput,
-                        onValueChange = { senderNameInput = it },
-                        label = { Text("Display Name") },
-                        placeholder = { Text("e.g. Harsh Raj") },
-                        singleLine = true,
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.fillMaxWidth()
+                        value = apiKeyInput,
+                        onValueChange = { apiKeyInput = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = Dimens.InputShape,
+                        label = { Text("OpenAI API Key") },
+                        placeholder = { Text("sk-...") },
+                        leadingIcon = { Icon(Icons.Default.Key, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                        trailingIcon = {
+                            IconButton(onClick = { passwordVisible = !passwordVisible }) {
+                                Icon(
+                                    imageVector = if (passwordVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                    contentDescription = if (passwordVisible) "Hide" else "Show",
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        },
+                        visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                        singleLine = true
                     )
+
+                    ExposedDropdownMenuBox(
+                        expanded = expandedModelMenu,
+                        onExpandedChange = { expandedModelMenu = !expandedModelMenu }
+                    ) {
+                        OutlinedTextField(
+                            value = savedModel,
+                            onValueChange = {},
+                            readOnly = true,
+                            shape = Dimens.InputShape,
+                            label = { Text("Model") },
+                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expandedModelMenu) },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable, true)
+                        )
+                        ExposedDropdownMenu(
+                            expanded = expandedModelMenu,
+                            onDismissRequest = { expandedModelMenu = false },
+                            shape = Dimens.InputShape
+                        ) {
+                            availableModels.forEach { modelName ->
+                                DropdownMenuItem(
+                                    text = { Text(modelName, fontWeight = if (modelName == savedModel) FontWeight.Bold else FontWeight.Normal) },
+                                    onClick = {
+                                        viewModel.saveModel(modelName)
+                                        expandedModelMenu = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    OutlinedButton(
+                        onClick = { viewModel.testConnection(apiKeyInput, savedModel) },
+                        enabled = apiKeyInput.isNotBlank() && !isTesting,
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        if (isTesting) {
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                            Spacer(modifier = Modifier.width(Dimens.SpacingSmall))
+                            Text("Testing Connection...")
+                        } else {
+                            Text("Test Connection", fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+
+                    if (testResult != null) {
+                        Surface(
+                            shape = Dimens.CardShape,
+                            color = if (testResult?.startsWith("Error") == true) {
+                                MaterialTheme.colorScheme.errorContainer
+                            } else {
+                                MaterialTheme.colorScheme.primaryContainer
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = testResult ?: "",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.Medium,
+                                color = if (testResult?.startsWith("Error") == true) {
+                                    MaterialTheme.colorScheme.onErrorContainer
+                                } else {
+                                    MaterialTheme.colorScheme.onPrimaryContainer
+                                },
+                                modifier = Modifier.padding(Dimens.SpacingSmall)
+                            )
+                        }
+                    }
                 }
             },
             confirmButton = {
                 Button(
                     onClick = {
-                        val email = editingAccountEmail
-                        if (email != null) {
-                            viewModel.updateDisplayName(email, senderNameInput.trim())
-                        } else {
-                            viewModel.updateDisplayName(senderNameInput.trim())
-                        }
-                        showEditSenderNameDialog = false
+                        viewModel.saveApiKey(apiKeyInput)
+                        showAiConfigDialog = false
+                    },
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Text("Save", fontWeight = FontWeight.SemiBold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showAiConfigDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    // Manage Connected Email Account Dialog
+    if (managingAccount != null) {
+        val account = managingAccount!!
+        AlertDialog(
+            onDismissRequest = { managingAccount = null },
+            shape = Dimens.DialogShape,
+            title = {
+                Text(
+                    text = "Manage Account",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(Dimens.SpacingMedium),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = account.emailAddress,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+
+                    OutlinedTextField(
+                        value = senderNameInput,
+                        onValueChange = { senderNameInput = it },
+                        label = { Text("Sender Name") },
+                        placeholder = { Text("Name shown on replies") },
+                        singleLine = true,
+                        shape = Dimens.InputShape,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Spacer(modifier = Modifier.height(Dimens.SpacingMicro))
+
+                    TextButton(
+                        onClick = {
+                            val emailToDisconnect = account.emailAddress
+                            viewModel.disconnectAccount(emailToDisconnect)
+                            managingAccount = null
+                        },
+                        colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                        modifier = Modifier.align(Alignment.Start)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.DeleteOutline,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(Dimens.SpacingSmall))
+                        Text("Disconnect Account", fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.updateDisplayName(account.emailAddress, senderNameInput.trim())
+                        managingAccount = null
                     },
                     shape = RoundedCornerShape(10.dp)
                 ) {
@@ -828,10 +760,234 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showEditSenderNameDialog = false }) {
+                TextButton(onClick = { managingAccount = null }) {
                     Text("Cancel")
                 }
             }
+        )
+    }
+
+    // Edit Profile Dialog
+    if (showEditProfileDialog && userProfile != null) {
+        EditProfileDialog(
+            userProfile = userProfile!!,
+            onDismiss = { showEditProfileDialog = false },
+            onSave = { updated ->
+                viewModel.updateUserProfile(updated)
+                showEditProfileDialog = false
+            }
+        )
+    }
+
+    // Sign Out Confirmation Dialog
+    if (showLogoutConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showLogoutConfirmDialog = false },
+            shape = Dimens.DialogShape,
+            title = { Text("Sign Out", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) },
+            text = { Text("Are you sure you want to sign out?", style = MaterialTheme.typography.bodyMedium) },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showLogoutConfirmDialog = false
+                        viewModel.logout()
+                        onLogout()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Text("Sign Out")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showLogoutConfirmDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+}
+
+/**
+ * Clean, minimal section title.
+ */
+@Composable
+private fun MinimalSectionTitle(title: String) {
+    Text(
+        text = title,
+        style = MaterialTheme.typography.labelLarge,
+        fontWeight = FontWeight.SemiBold,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(start = 4.dp, top = Dimens.SpacingSmall)
+    )
+}
+
+/**
+ * Clean provider connect row when no account is connected.
+ */
+@Composable
+private fun ProviderConnectRow(
+    name: String,
+    iconColor: Color,
+    iconTint: Color,
+    isPreparing: Boolean,
+    onConnect: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(enabled = !isPreparing, onClick = onConnect)
+            .padding(horizontal = Dimens.SpacingStandard, vertical = Dimens.SpacingMedium),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(Dimens.SpacingMedium),
+            modifier = Modifier.weight(1f)
+        ) {
+            Surface(
+                modifier = Modifier.size(36.dp),
+                shape = Dimens.BadgeShape,
+                color = iconColor
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.Default.Email,
+                        contentDescription = null,
+                        tint = iconTint,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+            Column {
+                Text(
+                    text = name,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = "Not connected",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        FilledTonalButton(
+            onClick = onConnect,
+            enabled = !isPreparing,
+            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 0.dp),
+            modifier = Modifier.height(34.dp),
+            shape = CircleShape
+        ) {
+            if (isPreparing) {
+                CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+            } else {
+                Text("Connect", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+            }
+        }
+    }
+}
+
+/**
+ * Clean, flat connected account row with chevron. Tapping opens management dialog.
+ */
+@Composable
+private fun ConnectedAccountRow(
+    account: EmailAccountEntity,
+    providerName: String,
+    iconColor: Color,
+    iconTint: Color,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = Dimens.SpacingStandard, vertical = Dimens.SpacingMedium),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(Dimens.SpacingMedium),
+            modifier = Modifier.weight(1f)
+        ) {
+            Surface(
+                modifier = Modifier.size(36.dp),
+                shape = Dimens.BadgeShape,
+                color = iconColor
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.Default.Email,
+                        contentDescription = null,
+                        tint = iconTint,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = account.emailAddress,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                val subtitle = if (!account.displayName.isNullOrBlank()) {
+                    "${account.displayName} • $providerName"
+                } else {
+                    "$providerName • Tap to manage"
+                }
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+
+        Icon(
+            imageVector = Icons.Default.ChevronRight,
+            contentDescription = "Manage",
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(20.dp)
+        )
+    }
+}
+
+/**
+ * Subtle text button to add another account for a provider.
+ */
+@Composable
+private fun AddAnotherAccountButton(
+    label: String,
+    isPreparing: Boolean,
+    onConnect: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(enabled = !isPreparing, onClick = onConnect)
+            .padding(horizontal = Dimens.SpacingStandard, vertical = Dimens.SpacingSmall),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Dimens.SpacingSmall)
+    ) {
+        Icon(
+            imageVector = Icons.Default.Add,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(16.dp)
+        )
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.primary
         )
     }
 }

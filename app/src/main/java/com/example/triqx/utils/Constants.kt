@@ -13,4 +13,21 @@ object Constants {
     const val GOOGLE_AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
     const val GOOGLE_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
     const val GOOGLE_USERINFO_ENDPOINT = "https://www.googleapis.com/oauth2/v3/userinfo"
+
+    // Microsoft / Outlook OAuth 2.0 & Graph API Configuration
+    // Set your Application (client) ID from Microsoft Entra / Azure Portal (App registrations)
+    var MICROSOFT_CLIENT_ID = "a34f012f-e7c9-4022-a4c7-b3b61e34e38e"
+    const val MICROSOFT_REDIRECT_URI = "com.example.triqx://oauth2redirect"
+    const val MICROSOFT_AUTH_ENDPOINT = "https://login.microsoftonline.com/common/oauth2/v2.0/authorize"
+    const val MICROSOFT_TOKEN_ENDPOINT = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
+    const val MICROSOFT_GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0"
+    val MICROSOFT_SCOPES = listOf(
+        "Mail.Send",
+        "Mail.Read",
+        "User.Read",
+        "offline_access",
+        "openid",
+        "profile",
+        "email"
+    )
 }

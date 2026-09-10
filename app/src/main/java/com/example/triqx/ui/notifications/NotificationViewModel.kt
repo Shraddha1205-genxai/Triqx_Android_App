@@ -249,7 +249,8 @@ class NotificationViewModel @Inject constructor(
     }
 
     fun canReply(groupKey: String, notificationKey: String? = null): Boolean {
-        if (isEmailApp(groupKey) && emailAccountStore.isGmailConnected()) return true
+        val pkg = if (groupKey.contains(":")) groupKey.substringBefore(":") else groupKey
+        if (isEmailApp(groupKey) && (emailAccountStore.hasAccountFor(pkg) || emailAccountStore.isGmailConnected() || emailAccountStore.isOutlookConnected())) return true
         return TriqxNotificationListenerService.instance?.canReply(groupKey, notificationKey) == true
     }
 
@@ -262,6 +263,7 @@ class NotificationViewModel @Inject constructor(
             val emailFromKey = if (conversation.groupKey.contains("_email_")) conversation.groupKey.substringAfterLast("_email_").substringAfterLast("_").trim() else null
             val cleanEmail = EmailUtils.cleanEmail(conversation.senderIdentifier)
                 ?: EmailUtils.cleanEmail(conversation.contact?.primaryEmail)
+                ?: EmailUtils.cleanEmail(conversation.title)
                 ?: EmailUtils.cleanEmail(emailFromKey)
 
             if (cleanEmail.isNullOrBlank()) {
