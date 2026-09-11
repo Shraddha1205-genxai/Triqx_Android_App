@@ -85,7 +85,7 @@ class AuthRepository @Inject constructor(
         userSessionManager.updateProfile(updatedProfile)
 
         // Sync with backend API
-        val token = userSessionManager.getAccessToken()
+        val token = userSessionManager.getValidAccessToken(otpAuthService)
         val remoteResult = otpAuthService.updateProfile(token, updatedProfile)
         remoteResult.onSuccess { syncedProfile ->
             userSessionManager.updateProfile(syncedProfile)
@@ -95,7 +95,7 @@ class AuthRepository @Inject constructor(
 
     suspend fun updateProfile(profile: UserProfile): Result<UserProfile> {
         userSessionManager.updateProfile(profile)
-        val token = userSessionManager.getAccessToken()
+        val token = userSessionManager.getValidAccessToken(otpAuthService)
         val remoteResult = otpAuthService.updateProfile(token, profile)
         remoteResult.onSuccess { syncedProfile ->
             userSessionManager.updateProfile(syncedProfile)

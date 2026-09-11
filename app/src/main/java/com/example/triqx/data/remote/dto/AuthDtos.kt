@@ -63,11 +63,13 @@ data class VerifyOtpResponse(
 
 // 3. Refresh Token
 data class RefreshTokenRequest(
-    @SerializedName("refreshToken") val refreshToken: String
+    @SerializedName("refreshToken") val refreshToken: String,
+    @SerializedName("token") val token: String? = refreshToken
 )
 
 data class RefreshTokenData(
     @SerializedName("accessToken") val accessToken: String? = null,
+    @SerializedName("token") val token: String? = null,
     @SerializedName("refreshToken") val refreshToken: String? = null
 )
 

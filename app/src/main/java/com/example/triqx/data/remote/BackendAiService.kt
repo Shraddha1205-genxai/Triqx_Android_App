@@ -78,7 +78,7 @@ class BackendAiService @Inject constructor(
             requestJson
         }
 
-        val authToken = sessionManager.getAuthToken()
+        val authToken = sessionManager.getValidAccessToken(otpAuthServiceProvider.get())
         val authHeader = if (!authToken.isNullOrBlank()) "Bearer $authToken" else "(none - unauthenticated)"
 
         val logRequest = buildString {
@@ -118,18 +118,17 @@ class BackendAiService @Inject constructor(
                 if (!response.isSuccessful) {
                     // If token expired (HTTP 401) and we haven't retried yet, attempt automatic silent token refresh
                     if ((response.code == 401 || responseBody.contains("expired", ignoreCase = true) || responseBody.contains("token", ignoreCase = true)) && !isRetry) {
-                        val refreshToken = sessionManager.getRefreshToken()
-                        if (!refreshToken.isNullOrBlank()) {
-                            Log.i(TAG, "[BACKEND AI] Auth token expired. Attempting silent token refresh...")
-                            val refreshResult = otpAuthServiceProvider.get().refreshToken(refreshToken)
-                            if (refreshResult.isSuccess) {
-                                val (newAccess, newRefresh) = refreshResult.getOrThrow()
-                                sessionManager.updateTokens(newAccess, newRefresh)
-                                Log.i(TAG, "[BACKEND AI] Token refreshed successfully. Retrying request...")
-                                return executeGenerateReplies(baseUrl, request, isRetry = true)
-                            } else {
-                                Log.w(TAG, "[BACKEND AI] Token refresh failed: ${refreshResult.exceptionOrNull()?.message}")
-                            }
+                        Log.i(TAG, "[BACKEND AI] Auth token rejected (HTTP ${response.code}). Attempting synchronized token refresh...")
+                        val refreshedToken = sessionManager.getValidAccessToken(
+                            otpAuthService = otpAuthServiceProvider.get(),
+                            forceRefresh = true,
+                            failedToken = authToken
+                        )
+                        if (!refreshedToken.isNullOrBlank() && refreshedToken != authToken) {
+                            Log.i(TAG, "[BACKEND AI] Token refreshed successfully. Retrying request...")
+                            return executeGenerateReplies(baseUrl, request, isRetry = true)
+                        } else {
+                            Log.w(TAG, "[BACKEND AI] Synchronized token refresh did not yield a new token.")
                         }
                     }
 

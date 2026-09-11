@@ -3,6 +3,7 @@ package com.example.triqx.data.remote
 import android.util.Log
 import com.example.triqx.data.api.ApiRoutes
 import com.example.triqx.data.local.UserProfile
+import com.example.triqx.data.local.UserSessionManager
 import com.example.triqx.data.remote.dto.*
 import com.example.triqx.utils.Constants
 import com.google.gson.Gson
@@ -13,12 +14,14 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import javax.inject.Inject
+import javax.inject.Provider
 import javax.inject.Singleton
 
 @Singleton
 class RealOtpAuthService @Inject constructor(
     private val okHttpClient: OkHttpClient,
-    private val gson: Gson
+    private val gson: Gson,
+    private val userSessionManagerProvider: Provider<UserSessionManager>
 ) : OtpAuthService {
 
     companion object {
@@ -131,7 +134,15 @@ class RealOtpAuthService @Inject constructor(
     }
 
     override suspend fun updateProfile(accessToken: String?, profile: UserProfile): Result<UserProfile> = withContext(Dispatchers.IO) {
-        try {
+        executeUpdateProfile(accessToken, profile, isRetry = false)
+    }
+
+    private suspend fun executeUpdateProfile(
+        accessToken: String?,
+        profile: UserProfile,
+        isRetry: Boolean
+    ): Result<UserProfile> {
+        return try {
             val cleanPhone = normalizePhoneNumber(profile.primaryPhone)
             val requestDto = UpdateProfileRequest(
                 email = profile.primaryEmail.orEmpty(),
@@ -143,9 +154,17 @@ class RealOtpAuthService @Inject constructor(
                 professionalDetails = profile.professionalDetails.trim()
             )
             val jsonBody = gson.toJson(requestDto)
+            val url = ApiRoutes.Auth.updateProfileUrl()
+
+            Log.i(TAG, "==================== [UPDATE PROFILE REQUEST] ====================")
+            Log.i(TAG, "URL: POST $url")
+            Log.i(TAG, "Headers: Authorization: Bearer ${accessToken?.take(15)}...")
+            Log.i(TAG, "Payload: $jsonBody")
+            Log.i(TAG, "==================================================================")
 
             val reqBuilder = Request.Builder()
-                .url(ApiRoutes.Auth.updateProfileUrl())
+                .url(url)
+                .addHeader("Content-Type", "application/json")
                 .post(jsonBody.toRequestBody(JSON_MEDIA_TYPE))
 
             if (!accessToken.isNullOrBlank()) {
@@ -154,6 +173,24 @@ class RealOtpAuthService @Inject constructor(
 
             val response = okHttpClient.newCall(reqBuilder.build()).execute()
             val responseBody = response.body?.string().orEmpty()
+
+            Log.i(TAG, "==================== [UPDATE PROFILE RESPONSE] ===================")
+            Log.i(TAG, "HTTP Status: ${response.code} (${response.message})")
+            Log.i(TAG, "Response Body: ${if (responseBody.isNotBlank()) responseBody else "(empty)"}")
+            Log.i(TAG, "==================================================================")
+
+            if (!response.isSuccessful) {
+                // If token expired (HTTP 401) and we haven't retried yet, refresh token and retry
+                if ((response.code == 401 || responseBody.contains("token", ignoreCase = true)) && !isRetry) {
+                    val sessionManager = userSessionManagerProvider.get()
+                    Log.i(TAG, "[UPDATE PROFILE] Auth token rejected (HTTP ${response.code}). Attempting token refresh...")
+                    val refreshedToken = sessionManager.getValidAccessToken(this, forceRefresh = true, failedToken = accessToken)
+                    if (!refreshedToken.isNullOrBlank() && refreshedToken != accessToken) {
+                        Log.i(TAG, "[UPDATE PROFILE] Token refreshed successfully. Retrying profile update...")
+                        return executeUpdateProfile(refreshedToken, profile, isRetry = true)
+                    }
+                }
+            }
 
             val parsedResponse = try {
                 gson.fromJson(responseBody, UpdateProfileResponse::class.java)
@@ -202,17 +239,36 @@ class RealOtpAuthService @Inject constructor(
     }
 
     override suspend fun refreshToken(refreshToken: String): Result<Pair<String, String>> = withContext(Dispatchers.IO) {
+        val cleanRefresh = refreshToken.trim()
+        if (cleanRefresh.isBlank()) {
+            Log.w(TAG, "[AUTH REFRESH TOKEN] Provided refresh token is blank.")
+            return@withContext Result.failure(IllegalArgumentException("Refresh token cannot be blank"))
+        }
+
         try {
-            val requestDto = RefreshTokenRequest(refreshToken = refreshToken)
+            val requestDto = RefreshTokenRequest(refreshToken = cleanRefresh, token = cleanRefresh)
             val jsonBody = gson.toJson(requestDto)
+            val url = ApiRoutes.Auth.refreshTokenUrl()
+
+            Log.i(TAG, "==================== [AUTH REFRESH TOKEN REQUEST] ====================")
+            Log.i(TAG, "URL: POST $url")
+            Log.i(TAG, "Headers: Content-Type: application/json")
+            Log.i(TAG, "Payload: $jsonBody")
+            Log.i(TAG, "=======================================================================")
 
             val request = Request.Builder()
-                .url(ApiRoutes.Auth.refreshTokenUrl())
+                .url(url)
+                .addHeader("Content-Type", "application/json")
                 .post(jsonBody.toRequestBody(JSON_MEDIA_TYPE))
                 .build()
 
             val response = okHttpClient.newCall(request).execute()
             val responseBody = response.body?.string().orEmpty()
+
+            Log.i(TAG, "==================== [AUTH REFRESH TOKEN RESPONSE] ===================")
+            Log.i(TAG, "HTTP Status: ${response.code} (${response.message})")
+            Log.i(TAG, "Response Body: ${if (responseBody.isNotBlank()) responseBody else "(empty)"}")
+            Log.i(TAG, "=======================================================================")
 
             val parsedResponse = try {
                 gson.fromJson(responseBody, RefreshTokenResponse::class.java)
@@ -221,14 +277,19 @@ class RealOtpAuthService @Inject constructor(
             }
 
             if (response.isSuccessful && parsedResponse?.success == true && parsedResponse.data != null) {
-                val newAccess = parsedResponse.data.accessToken.orEmpty()
-                val newRefresh = parsedResponse.data.refreshToken.orEmpty()
-                Result.success(Pair(newAccess, newRefresh))
+                val newAccess = parsedResponse.data.accessToken ?: parsedResponse.data.token ?: ""
+                val newRefresh = parsedResponse.data.refreshToken?.takeIf { it.isNotBlank() } ?: cleanRefresh
+                if (newAccess.isBlank()) {
+                    Result.failure(Exception("Backend did not return a valid new access token"))
+                } else {
+                    Result.success(Pair(newAccess, newRefresh))
+                }
             } else {
-                val errorMsg = parsedResponse?.message ?: "Token refresh failed (${response.code})"
+                val errorMsg = parsedResponse?.message ?: "Token refresh failed (${response.code}: ${response.message})"
                 Result.failure(Exception(errorMsg))
             }
         } catch (e: Exception) {
+            Log.e(TAG, "[AUTH REFRESH TOKEN EXCEPTION]: ${e.message}", e)
             Result.failure(e)
         }
     }
