@@ -345,7 +345,7 @@ fun ProfileSetupScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = Dimens.SpacingStandard)
-                    .padding(bottom = Dimens.SpacingStandard)
+                    .padding(top = Dimens.SpacingStandard, bottom = Dimens.SpacingStandard)
             ) {
                 M3ExpressiveButton(
                     text = "Continue",

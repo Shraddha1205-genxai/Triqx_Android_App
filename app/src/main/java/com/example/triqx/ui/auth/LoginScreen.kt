@@ -249,15 +249,21 @@ private fun PhoneInputExpressive(
         }
 
         // Fixed Bottom Pill CTA Button
-        M3ExpressiveButton(
-            text = "Continue",
-            onClick = {
-                focusManager.clearFocus()
-                onSendOtp()
-            },
-            enabled = uiState.isPhoneValid,
-            isLoading = uiState.isLoading
-        )
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = Dimens.SpacingStandard)
+        ) {
+            M3ExpressiveButton(
+                text = "Continue",
+                onClick = {
+                    focusManager.clearFocus()
+                    onSendOtp()
+                },
+                enabled = uiState.isPhoneValid,
+                isLoading = uiState.isLoading
+            )
+        }
 
         if (showCountryPicker) {
             CountryPickerBottomSheet(
@@ -407,11 +413,17 @@ private fun OtpVerificationExpressive(
         }
 
         // Fixed Bottom CTA
-        M3ExpressiveButton(
-            text = "Continue",
-            onClick = onVerifyOtp,
-            enabled = uiState.canSubmitOtp,
-            isLoading = uiState.isLoading
-        )
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = Dimens.SpacingStandard)
+        ) {
+            M3ExpressiveButton(
+                text = "Continue",
+                onClick = onVerifyOtp,
+                enabled = uiState.canSubmitOtp,
+                isLoading = uiState.isLoading
+            )
+        }
     }
 }
