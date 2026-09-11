@@ -146,7 +146,7 @@ fun ProfileSetupScreen(
                     M3ExpressiveTextField(
                         value = uiState.firstName,
                         onValueChange = viewModel::onFirstNameChange,
-                        placeholder = "e.g. Harsh",
+                        placeholder = "e.g. John",
                         isError = uiState.firstNameError != null,
                         supportingText = {
                             if (uiState.firstNameError != null) {
@@ -171,7 +171,7 @@ fun ProfileSetupScreen(
                     M3ExpressiveTextField(
                         value = uiState.lastName,
                         onValueChange = viewModel::onLastNameChange,
-                        placeholder = "e.g. Raj"
+                        placeholder = "e.g. Doe"
                     )
                 }
 

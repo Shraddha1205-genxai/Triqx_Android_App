@@ -13,19 +13,19 @@ class AuthUnitTest {
     @Test
     fun userProfile_computedProperties_areCorrect() {
         val profile = UserProfile(
-            firstName = "Harsh",
-            lastName = "Raj",
+            firstName = "John",
+            lastName = "Doe",
             phoneNumbers = listOf("+91 9876543210", "+91 9123456780"),
-            emails = listOf("harsh@example.com"),
+            emails = listOf("john.doe@example.com"),
             aboutMe = "Lead Developer",
             professionalDetails = "Android Architect",
             isFirstLogin = true
         )
 
-        assertEquals("Harsh Raj", profile.fullName)
-        assertEquals("HR", profile.initials)
+        assertEquals("John Doe", profile.fullName)
+        assertEquals("JD", profile.initials)
         assertEquals("+91 9876543210", profile.primaryPhone)
-        assertEquals("harsh@example.com", profile.primaryEmail)
+        assertEquals("john.doe@example.com", profile.primaryEmail)
         assertTrue(profile.isFirstLogin)
 
         val singleNameProfile = UserProfile(firstName = "Triqx")

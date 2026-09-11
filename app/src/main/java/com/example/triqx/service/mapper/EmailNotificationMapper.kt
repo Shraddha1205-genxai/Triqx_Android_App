@@ -179,7 +179,7 @@ class EmailNotificationMapper : NotificationMapper {
             } catch (_: Exception) {}
         }
 
-        // 4. Extract from title (e.g. "Harsh Raj <harsh@genxai.com>" or "harsh@genxai.com")
+        // 4. Extract from title (e.g. "John Doe <john.doe@example.com>" or "john.doe@example.com")
         if (!title.isNullOrBlank()) {
             val candidate = EmailUtils.cleanEmail(title)
             if (candidate != null && (cleanReceiver == null || !candidate.equals(cleanReceiver, ignoreCase = true))) {
@@ -214,7 +214,7 @@ class EmailNotificationMapper : NotificationMapper {
         extras: Bundle,
         rawJson: String?
     ): String? {
-        // In Gmail & Outlook, EXTRA_SUB_TEXT directly holds the user's receiving account email (e.g. "gamesvc3@gmail.com")
+        // In Gmail & Outlook, EXTRA_SUB_TEXT directly holds the user's receiving account email (e.g. "user@example.com")
         val subText = extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString()?.trim()
         if (!subText.isNullOrBlank() && subText.contains("@")) {
             return subText.lowercase()

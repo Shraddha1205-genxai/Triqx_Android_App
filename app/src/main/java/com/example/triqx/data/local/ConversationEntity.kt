@@ -14,7 +14,7 @@ data class ConversationEntity(
     val contactId: Int? = null,                  // Linked VIP Contact ID (null for non-VIPs/groups)
     val title: String,                           // Sender/Group display name
     val senderIdentifier: String? = null,        // Email address or phone number of sender
-    val receiverIdentifier: String? = null,      // User's receiving account email or identifier (e.g. raj.harsh2001@gmail.com)
+    val receiverIdentifier: String? = null,      // User's receiving account email or identifier (e.g. user@example.com)
     val messages: List<ChatMessage> = emptyList(), // Full conversation history
     val latestTimestamp: Long,                   // Timestamp of the latest message for sorting
     val latestNotificationKey: String? = null,   // Android notification slot key for live dismiss/reply
