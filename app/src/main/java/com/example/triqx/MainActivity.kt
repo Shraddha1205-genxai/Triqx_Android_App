@@ -12,16 +12,25 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import com.example.triqx.service.TriqxAssistantNotificationManager
+import androidx.compose.animation.AnimatedContentTransitionScope
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -29,15 +38,19 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import androidx.navigation.navDeepLink
 import com.example.triqx.data.local.UserSessionManager
 import com.example.triqx.ui.auth.LoginScreen
 import com.example.triqx.ui.auth.LoginViewModel
 import com.example.triqx.ui.auth.ProfileSetupScreen
 import com.example.triqx.ui.auth.ProfileSetupViewModel
 import com.example.triqx.ui.apps.AppSelectionScreen
+import com.example.triqx.ui.apps.AppViewModel
 import com.example.triqx.ui.apps.ImportantAppsScreen
 import com.example.triqx.ui.contacts.ContactDetailsScreen
+import com.example.triqx.ui.contacts.ContactViewModel
 import com.example.triqx.ui.contacts.PriorityContactsScreen
+import com.example.triqx.ui.filters.PriorityFiltersScreen
 import com.example.triqx.ui.home.ChatScreen
 import com.example.triqx.ui.home.HomeScreen
 import com.example.triqx.ui.navigation.TriqxBottomNavigationBar
@@ -46,6 +59,7 @@ import com.example.triqx.ui.notifications.NotificationHistoryScreen
 import com.example.triqx.ui.notifications.NotificationViewModel
 import com.example.triqx.ui.settings.SettingsScreen
 import com.example.triqx.ui.settings.SettingsViewModel
+import com.example.triqx.ui.theme.Dimens
 import com.example.triqx.ui.theme.TriqxTheme
 import androidx.lifecycle.lifecycleScope
 import dagger.hilt.android.AndroidEntryPoint
@@ -62,6 +76,8 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.RequestPermission()
     ) { _ -> }
 
+    private var pendingConversationKey by mutableStateOf<String?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -77,6 +93,9 @@ class MainActivity : ComponentActivity() {
         }
 
         handleOAuthRedirect(intent)
+        extractConversationKey(intent)?.let {
+            pendingConversationKey = it
+        }
 
         setContent {
             TriqxTheme {
@@ -95,17 +114,39 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
+                LaunchedEffect(isLoggedIn) {
+                    if (!isLoggedIn && currentRoute != null && currentRoute != "login") {
+                        navController.navigate("login") {
+                            popUpTo(0) { inclusive = true }
+                            launchSingleTop = true
+                        }
+                    }
+                }
+
+                LaunchedEffect(pendingConversationKey, isLoggedIn, currentRoute) {
+                    val key = pendingConversationKey
+                    if (key != null && isLoggedIn && currentRoute != null && currentRoute != "login" && currentRoute != "profile_setup") {
+                        val encoded = Uri.encode(key)
+                        navController.navigate("chat/$encoded") {
+                            popUpTo("home") { saveState = false }
+                            launchSingleTop = true
+                        }
+                        pendingConversationKey = null
+                    }
+                }
+
                 val settingsViewModel: SettingsViewModel = hiltViewModel()
                 val showDebugMenu by settingsViewModel.showDebugMenu.collectAsState()
 
                 val topLevelRoutes = remember(showDebugMenu) {
                     if (showDebugMenu) {
-                        setOf("home", "contacts", "apps", "debug", "settings")
+                        setOf("home", "filters", "debug", "settings")
                     } else {
-                        setOf("home", "contacts", "apps", "settings")
+                        setOf("home", "filters", "settings")
                     }
                 }
-                val showBottomBar = currentRoute in topLevelRoutes
+                val currentBaseRoute = currentRoute?.substringBefore('?')
+                val showBottomBar = currentBaseRoute in topLevelRoutes
 
                 Scaffold(
                     modifier = Modifier.fillMaxSize(),
@@ -125,7 +166,47 @@ class MainActivity : ComponentActivity() {
                         startDestination = initialDestination,
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(bottom = innerPadding.calculateBottomPadding())
+                            .padding(bottom = if (showBottomBar) 0.dp else innerPadding.calculateBottomPadding()),
+                        enterTransition = {
+                            if (targetState.destination.route?.startsWith("chat") == true) {
+                                slideIntoContainer(
+                                    towards = AnimatedContentTransitionScope.SlideDirection.Start,
+                                    animationSpec = tween(durationMillis = Dimens.AnimDurationMedium, easing = FastOutSlowInEasing)
+                                )
+                            } else {
+                                EnterTransition.None
+                            }
+                        },
+                        exitTransition = {
+                            if (targetState.destination.route?.startsWith("chat") == true) {
+                                slideOutOfContainer(
+                                    towards = AnimatedContentTransitionScope.SlideDirection.Start,
+                                    animationSpec = tween(durationMillis = Dimens.AnimDurationMedium, easing = FastOutSlowInEasing)
+                                )
+                            } else {
+                                ExitTransition.None
+                            }
+                        },
+                        popEnterTransition = {
+                            if (initialState.destination.route?.startsWith("chat") == true) {
+                                slideIntoContainer(
+                                    towards = AnimatedContentTransitionScope.SlideDirection.End,
+                                    animationSpec = tween(durationMillis = Dimens.AnimDurationMedium, easing = FastOutSlowInEasing)
+                                )
+                            } else {
+                                EnterTransition.None
+                            }
+                        },
+                        popExitTransition = {
+                            if (initialState.destination.route?.startsWith("chat") == true) {
+                                slideOutOfContainer(
+                                    towards = AnimatedContentTransitionScope.SlideDirection.End,
+                                    animationSpec = tween(durationMillis = Dimens.AnimDurationMedium, easing = FastOutSlowInEasing)
+                                )
+                            } else {
+                                ExitTransition.None
+                            }
+                        }
                     ) {
                         composable("login") {
                             val loginViewModel: LoginViewModel = hiltViewModel()
@@ -185,14 +266,14 @@ class MainActivity : ComponentActivity() {
                                     }
                                 },
                                 onNavigateToContacts = {
-                                    navController.navigate("contacts") {
+                                    navController.navigate("filters?tab=contacts") {
                                         popUpTo("home") { saveState = true }
                                         launchSingleTop = true
                                         restoreState = true
                                     }
                                 },
                                 onNavigateToApps = {
-                                    navController.navigate("apps") {
+                                    navController.navigate("filters?tab=apps") {
                                         popUpTo("home") { saveState = true }
                                         launchSingleTop = true
                                         restoreState = true
@@ -202,7 +283,10 @@ class MainActivity : ComponentActivity() {
                         }
                         composable(
                             route = "chat/{groupKey}",
-                            arguments = listOf(navArgument("groupKey") { type = NavType.StringType })
+                            arguments = listOf(navArgument("groupKey") { type = NavType.StringType }),
+                            deepLinks = listOf(
+                                navDeepLink { uriPattern = "triqx://chat/{groupKey}" }
+                            )
                         ) { backStackEntry ->
                             val encodedKey = backStackEntry.arguments?.getString("groupKey") ?: ""
                             val groupKey = Uri.decode(encodedKey)
@@ -220,18 +304,50 @@ class MainActivity : ComponentActivity() {
                                 onNavigateToSettings = { navController.navigate("settings") }
                             )
                         }
+                        composable(
+                            route = "filters?tab={tab}",
+                            arguments = listOf(navArgument("tab") {
+                                type = NavType.StringType
+                                defaultValue = "apps"
+                            })
+                        ) { backStackEntry ->
+                            val tab = backStackEntry.arguments?.getString("tab") ?: "apps"
+                            val appViewModel: AppViewModel = hiltViewModel()
+                            val contactViewModel: ContactViewModel = hiltViewModel()
+                            PriorityFiltersScreen(
+                                appViewModel = appViewModel,
+                                contactViewModel = contactViewModel,
+                                initialTab = tab,
+                                onNavigateToAppSelection = { navController.navigate("app_selection") },
+                                onNavigateToContactDetail = { contactId ->
+                                    navController.navigate("contact_details/$contactId")
+                                }
+                            )
+                        }
                         composable("contacts") {
-                            PriorityContactsScreen(
-                                viewModel = hiltViewModel(),
-                                onNavigateToDetail = { contactId ->
+                            val appViewModel: AppViewModel = hiltViewModel()
+                            val contactViewModel: ContactViewModel = hiltViewModel()
+                            PriorityFiltersScreen(
+                                appViewModel = appViewModel,
+                                contactViewModel = contactViewModel,
+                                initialTab = "contacts",
+                                onNavigateToAppSelection = { navController.navigate("app_selection") },
+                                onNavigateToContactDetail = { contactId ->
                                     navController.navigate("contact_details/$contactId")
                                 }
                             )
                         }
                         composable("apps") {
-                            ImportantAppsScreen(
-                                viewModel = hiltViewModel(),
-                                onNavigateToSelection = { navController.navigate("app_selection") }
+                            val appViewModel: AppViewModel = hiltViewModel()
+                            val contactViewModel: ContactViewModel = hiltViewModel()
+                            PriorityFiltersScreen(
+                                appViewModel = appViewModel,
+                                contactViewModel = contactViewModel,
+                                initialTab = "apps",
+                                onNavigateToAppSelection = { navController.navigate("app_selection") },
+                                onNavigateToContactDetail = { contactId ->
+                                    navController.navigate("contact_details/$contactId")
+                                }
                             )
                         }
                         composable("debug") {
@@ -303,6 +419,24 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         handleOAuthRedirect(intent)
+        extractConversationKey(intent)?.let {
+            pendingConversationKey = it
+        }
+    }
+
+    private fun extractConversationKey(intent: Intent?): String? {
+        if (intent == null) return null
+        val extraKey = intent.getStringExtra(TriqxAssistantNotificationManager.EXTRA_CONVERSATION_KEY)
+        if (!extraKey.isNullOrBlank()) return extraKey
+
+        val data = intent.data
+        if (data != null && data.scheme.equals("triqx", ignoreCase = true)) {
+            val lastSegment = data.lastPathSegment
+            if (!lastSegment.isNullOrBlank()) {
+                return Uri.decode(lastSegment)
+            }
+        }
+        return null
     }
 
     private fun handleOAuthRedirect(intent: Intent?) {

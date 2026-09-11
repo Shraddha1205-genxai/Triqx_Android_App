@@ -442,7 +442,7 @@ class TriqxNotificationListenerService : NotificationListenerService() {
 
             // --- 5. UPDATE CONVERSATION ENTITY IN ROOM ---
             if (!isFromYou) {
-                val currentConversation = conversationDao.getConversationByKey(conversationKey).firstOrNull()
+                val currentConversation = conversationDao.findConversationByKey(conversationKey)
 
                 val newChatMessage = ChatMessage(
                     senderName = senderName,
@@ -472,56 +472,36 @@ class TriqxNotificationListenerService : NotificationListenerService() {
                     receiverIdentifier = finalReceiver,
                     messages = updatedMessages,
                     latestTimestamp = timestamp,
-                    latestNotificationKey = sbn.key
+                    latestNotificationKey = sbn.key,
+                    customPrompt = currentConversation?.customPrompt,
+                    replyCount = currentConversation?.replyCount
                 )
-                conversationDao.insertOrUpdate(entityToSave)
+                conversationDao.upsertPreservingAiSettings(entityToSave)
 
                 Log.i(TAG, "===> [CONVERSATION TABLE UPSERT] key='${entityToSave.conversationKey}', title='${entityToSave.title}', sender='${newChatMessage.senderName}', isFromYou=${newChatMessage.isFromYou}, subText='${newChatMessage.subText}', body='${newChatMessage.bodyText}', totalMsgs=${updatedMessages.size}")
-            }
 
-            val chatTitle = parsed.conversationTitle
+                val chatTitle = parsed.conversationTitle
 
-            // --- 6. TRIGGER ASSISTANT NOTIFICATION ---
-            if (!isFromYou && parsed.bodyText.isNotBlank()) {
-                val recentList = notificationDao.getRecentNotificationsList(25)
-                val threadMessages = recentList.filter { notif ->
-                    if (notif.packageName != packageName) return@filter false
-                    val notifTag = if (isEmailApp(packageName)) {
-                        val notifEmail = notif.senderEmail?.removePrefix("mailto:")?.trim()
-                        if (!notifEmail.isNullOrBlank()) "email_$notifEmail" else "sender_${notif.title?.trim() ?: "default"}"
-                    } else {
-                        extractTagFromJson(notif.rawJson) ?: extractTagFromKey(notif.notificationKey) ?: notif.title?.trim() ?: "default"
-                    }
-                    computeConversationKey(notif.packageName, notifTag) == conversationKey || notif.title.equals("You", ignoreCase = true)
-                }.sortedByDescending { it.timestamp }
+                // --- 6. TRIGGER ASSISTANT NOTIFICATION (Saved -> Call API -> Save Replies -> Post Notification) ---
+                if (parsed.bodyText.isNotBlank()) {
+                    Log.i(TAG, "===> [ASSISTANT FLOW] 1. Message saved in conversation. Calling AI replies API for '$conversationKey'...")
+                    val smartReplies = openAiRepository.getOrGenerateReplies(conversationKey, chatTitle, updatedMessages)
+                    Log.i(TAG, "===> [ASSISTANT FLOW] 2. Received & saved ${smartReplies.size} replies. Posting assistant notification...")
 
-                val messagesForAi = if (threadMessages.isNotEmpty()) threadMessages else listOf(
-                    NotificationEntity(
+                    TriqxAssistantNotificationManager.postOrUpdateAssistantNotification(
+                        context = applicationContext,
+                        groupKey = conversationKey,
+                        contactOrTitle = chatTitle,
                         packageName = packageName,
-                        title = senderName,
-                        text = parsed.bodyText,
-                        senderEmail = resolvedSenderEmail,
-                        contactLookupUri = contactLookupUri,
-                        rawJson = rawJson,
                         notificationKey = sbn.key,
-                        timestamp = timestamp
+                        contactId = matchedContact?.id ?: currentConversation?.contactId,
+                        senderIdentifier = cleanSender,
+                        receiverIdentifier = finalReceiver,
+                        latestMessageText = parsed.bodyText,
+                        timestamp = timestamp,
+                        smartReplies = smartReplies
                     )
-                )
-
-                val smartReplies = openAiRepository.getOrGenerateReplies(conversationKey, chatTitle, messagesForAi)
-
-                TriqxAssistantNotificationManager.postOrUpdateAssistantNotification(
-                    context = applicationContext,
-                    groupKey = conversationKey,
-                    contactOrTitle = chatTitle,
-                    packageName = packageName,
-                    notificationKey = sbn.key,
-                    contactId = matchedContact?.id,
-                    senderIdentifier = resolvedSenderEmail ?: matchedContact?.primaryPhone,
-                    receiverIdentifier = parsed.receiverIdentifier,
-                    messages = messagesForAi,
-                    smartReplies = smartReplies
-                )
+                }
             }
         }
     }

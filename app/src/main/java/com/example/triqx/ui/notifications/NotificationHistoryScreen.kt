@@ -68,6 +68,7 @@ fun NotificationHistoryScreen(
                 .fillMaxSize()
                 .padding(top = innerPadding.calculateTopPadding())
                 .statusBarsPadding()
+                .padding(top = Dimens.ScreenTopPadding)
         ) {
             // Google Floating Search Bar Pill
             TriqxSearchBar(
@@ -177,8 +178,12 @@ fun NotificationHistoryScreen(
             if (notifications.isEmpty()) {
                 Box(
                     modifier = Modifier
-                        .fillMaxSize()
-                        .padding(24.dp),
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .navigationBarsPadding()
+                        .padding(bottom = 80.dp)
+                        .offset(y = (-16).dp)
+                        .padding(horizontal = 24.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Column(
@@ -219,7 +224,13 @@ fun NotificationHistoryScreen(
                 }
             } else if (filteredNotifications.isEmpty()) {
                 Box(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .navigationBarsPadding()
+                        .padding(bottom = 80.dp)
+                        .offset(y = (-16).dp)
+                        .padding(horizontal = 24.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
@@ -231,8 +242,7 @@ fun NotificationHistoryScreen(
             } else {
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 80.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                    contentPadding = PaddingValues(top = Dimens.SpacingNano, bottom = 80.dp)
                 ) {
                     items(filteredNotifications, key = { it.id }) { item ->
                         GoogleNotificationItem(
@@ -255,20 +265,17 @@ fun GoogleNotificationItem(
 ) {
     val dateFormat = remember { SimpleDateFormat("h:mm:ss a", Locale.getDefault()) }
 
-    Surface(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick),
-        shape = Dimens.CardShape,
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
-        tonalElevation = 1.dp
+            .clickable(onClick = onClick)
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(Dimens.SpacingStandard),
+                .padding(horizontal = Dimens.SpacingStandard, vertical = Dimens.SpacingSemiMedium),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
+            horizontalArrangement = Arrangement.spacedBy(Dimens.SpacingMedium)
         ) {
             Surface(
                 modifier = Modifier.size(42.dp),
@@ -347,5 +354,10 @@ fun GoogleNotificationItem(
                 )
             }
         }
+        HorizontalDivider(
+            modifier = Modifier.padding(start = 70.dp, end = Dimens.SpacingStandard),
+            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f),
+            thickness = 0.5.dp
+        )
     }
 }

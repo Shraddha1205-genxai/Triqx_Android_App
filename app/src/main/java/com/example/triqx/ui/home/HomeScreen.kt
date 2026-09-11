@@ -7,6 +7,10 @@ import android.widget.Toast
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -14,8 +18,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Clear
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Contacts
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Grid3x3
 import androidx.compose.material.icons.filled.NotificationsActive
@@ -28,9 +32,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.triqx.data.local.ChatMessage
@@ -40,7 +50,6 @@ import com.example.triqx.ui.components.TriqxSearchBar
 import com.example.triqx.ui.theme.Dimens
 import com.example.triqx.ui.notifications.Conversation
 import com.example.triqx.ui.notifications.NotificationViewModel
-import com.example.triqx.utils.EmailUtils
 import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.ConcurrentHashMap
@@ -191,17 +200,60 @@ fun HomeScreen(
                 .padding(top = innerPadding.calculateTopPadding())
                 .statusBarsPadding()
         ) {
-            // Google Drive Style Floating Search Bar Pill
-            TriqxSearchBar(
-                query = searchQuery,
-                onQueryChange = { searchQuery = it },
-                placeholder = "Search in Triqx",
-                trailingContent = {
+            // Top App Bar: "Triqx" on Top Left, Account Logo on Top Right
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = Dimens.SpacingStandard, vertical = Dimens.SpacingSmall),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = "Triqx",
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(Dimens.SpacingSmall)
+                ) {
+                    if (groups.isNotEmpty()) {
+                        CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
+                            IconButton(
+                                onClick = { showClearConfirmDialog = true },
+                                modifier = Modifier.size(34.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.DeleteSweep,
+                                    contentDescription = "Clear All",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+                    }
                     ProfileAvatarBadge(
                         initials = userInitials,
                         onClick = onNavigateToSettings
                     )
                 }
+            }
+
+            Spacer(modifier = Modifier.height(Dimens.SpacingNano))
+
+            // Google Drive Style Floating Search Bar Pill
+            TriqxSearchBar(
+                query = searchQuery,
+                onQueryChange = { searchQuery = it },
+                placeholder = "Search in Triqx",
+                contentPadding = PaddingValues(
+                    start = Dimens.SpacingStandard,
+                    end = Dimens.SpacingStandard,
+                    top = Dimens.SpacingNano,
+                    bottom = Dimens.SpacingNano
+                )
             )
 
             // App Filter Chips (App-wise filter: All, WhatsApp, Gmail, etc. with most recent first)
@@ -209,9 +261,9 @@ fun HomeScreen(
                 LazyRow(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(top = Dimens.SpacingSmall, bottom = Dimens.SpacingMicro),
+                        .padding(top = Dimens.SpacingPico, bottom = Dimens.SpacingPico),
                     contentPadding = PaddingValues(horizontal = Dimens.SpacingStandard),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(Dimens.SpacingSmall)
                 ) {
                     items(
                         items = availableAppFilters,
@@ -230,59 +282,12 @@ fun HomeScreen(
                 }
             }
 
-            // Section Header: Title + Count + Action Buttons
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(
-                        start = Dimens.SpacingStandard,
-                        end = Dimens.SpacingStandard,
-                        top = Dimens.SpacingSmall,
-                        bottom = Dimens.SpacingMicro
-                    ),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = "Priority Feed",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    if (filteredGroups.isNotEmpty()) {
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = "(${filteredGroups.size})",
-                            style = MaterialTheme.typography.titleSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (groups.isNotEmpty()) {
-                        IconButton(
-                            onClick = { showClearConfirmDialog = true },
-                            modifier = Modifier.size(32.dp)
-                        ) {
-                            Icon(
-                                Icons.Default.DeleteSweep,
-                                contentDescription = "Clear All",
-                                tint = MaterialTheme.colorScheme.outline,
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
-                    }
-                }
-            }
-
             // Permission Warning Banner if listener disabled
             if (!isEnabled) {
                 Surface(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 6.dp),
+                        .padding(horizontal = Dimens.SpacingStandard, vertical = Dimens.SpacingMicro),
                     shape = RoundedCornerShape(16.dp),
                     color = MaterialTheme.colorScheme.errorContainer
                 ) {
@@ -332,8 +337,12 @@ fun HomeScreen(
             if (groups.isEmpty()) {
                 Box(
                     modifier = Modifier
-                        .fillMaxSize()
-                        .padding(24.dp),
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .navigationBarsPadding()
+                        .padding(bottom = 80.dp)
+                        .offset(y = (-16).dp)
+                        .padding(horizontal = 24.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Column(
@@ -358,13 +367,13 @@ fun HomeScreen(
                         Spacer(modifier = Modifier.height(Dimens.SpacingStandard))
 
                         Text(
-                            text = "No Priority Messages",
+                            text = "No Messages",
                             style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.Bold
                         )
                         Spacer(modifier = Modifier.height(Dimens.SpacingSmall))
                         Text(
-                            text = "Notifications from your VIP contacts and apps will appear here as conversations.",
+                            text = "Important conversations will appear here.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             textAlign = androidx.compose.ui.text.style.TextAlign.Center,
@@ -404,7 +413,13 @@ fun HomeScreen(
                 }
             } else if (filteredGroups.isEmpty()) {
                 Box(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .navigationBarsPadding()
+                        .padding(bottom = 80.dp)
+                        .offset(y = (-16).dp)
+                        .padding(horizontal = 24.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     val emptyMessage = when {
@@ -425,25 +440,36 @@ fun HomeScreen(
                 }
             } else {
                 val onViewContactStable = remember(onViewContact) { onViewContact }
-                val onDismissGroupAction = remember(viewModel, context) {
+                val onDeleteConversationAction = remember(viewModel, context) {
                     { group: Conversation ->
-                        viewModel.dismissGroup(group)
-                        Toast.makeText(context, "Dismissed", Toast.LENGTH_SHORT).show()
+                        viewModel.deleteConversation(group)
+                        Toast.makeText(context, "Conversation deleted", Toast.LENGTH_SHORT).show()
+                    }
+                }
+                val onDeleteChatsAction = remember(viewModel, context) {
+                    { group: Conversation ->
+                        viewModel.deleteChats(group)
+                        Toast.makeText(context, "Chats deleted", Toast.LENGTH_SHORT).show()
                     }
                 }
 
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 80.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                    contentPadding = PaddingValues(
+                        top = Dimens.SpacingNano,
+                        bottom = 100.dp
+                    )
                 ) {
                     items(
                         items = filteredGroups,
                         key = { it.groupKey },
                         contentType = { "conversation_card" }
                     ) { group ->
-                        val dismissHandler = remember(group.groupKey, onDismissGroupAction) {
-                            { onDismissGroupAction(group) }
+                        val deleteConversationHandler = remember(group.groupKey, onDeleteConversationAction) {
+                            { onDeleteConversationAction(group) }
+                        }
+                        val deleteChatsHandler = remember(group.groupKey, onDeleteChatsAction) {
+                            { onDeleteChatsAction(group) }
                         }
                         val clickHandler = remember(group.groupKey, onConversationClick) {
                             { onConversationClick(group.groupKey) }
@@ -452,7 +478,8 @@ fun HomeScreen(
                         WhatsAppConversationCard(
                             group = group,
                             onClick = clickHandler,
-                            onDismissGroup = dismissHandler,
+                            onDeleteConversation = deleteConversationHandler,
+                            onDeleteChats = deleteChatsHandler,
                             onViewContact = onViewContactStable
                         )
                     }
@@ -468,7 +495,7 @@ fun HomeScreen(
             shape = Dimens.DialogShape,
             title = {
                 Text(
-                    text = "Clear Priority Feed?",
+                    text = "Clear All Messages?",
                     fontWeight = FontWeight.Bold
                 )
             },
@@ -551,20 +578,25 @@ private fun TriqxFilterChip(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun WhatsAppConversationCard(
     group: Conversation,
     onClick: () -> Unit,
-    onDismissGroup: () -> Unit,
+    onDeleteConversation: () -> Unit,
+    onDeleteChats: () -> Unit,
     onViewContact: (String) -> Unit
 ) {
-    val context = LocalContext.current
     val dateFormat = remember { SimpleDateFormat("h:mm a", Locale.getDefault()) }
     val formattedDate = remember(group.latestTimestamp) {
         dateFormat.format(Date(group.latestTimestamp))
     }
     val latest = group.messages.firstOrNull()
     val groupTitle = group.title
+
+    val density = LocalDensity.current
+    var showContextMenu by remember { mutableStateOf(false) }
+    var pressOffset by remember { mutableStateOf(DpOffset.Zero) }
 
     val recentMessagePreview = remember(latest, groupTitle) {
         if (latest == null) ""
@@ -586,30 +618,37 @@ fun WhatsAppConversationCard(
         }
     }
 
-    val appName = remember(group.packageName, context) {
-        AppNameResolver.getDisplayName(context, group.packageName)
-    }
-
-    Surface(
+    Box(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(Dimens.CardShape)
-            .clickable { onClick() },
-        shape = Dimens.CardShape,
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
-        tonalElevation = 1.dp
+            .pointerInput(group.groupKey) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                    pressOffset = DpOffset(
+                        x = with(density) { down.position.x.toDp() },
+                        y = with(density) { down.position.y.toDp() }
+                    )
+                }
+            }
+            .combinedClickable(
+                onClick = { onClick() },
+                onLongClick = { showContextMenu = true }
+            )
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp),
+                .padding(horizontal = Dimens.SpacingStandard, vertical = Dimens.SpacingSemiMedium),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
+            horizontalArrangement = Arrangement.spacedBy(Dimens.SpacingMedium)
         ) {
-            // Squircle Avatar
-            Box(
+            // Squircle Avatar (No shadow, no extra Surface/div wrapper)
+            AppIcon(
+                packageName = group.packageName,
+                appName = groupTitle,
                 modifier = Modifier
                     .size(46.dp)
+                    .clip(RoundedCornerShape(14.dp))
                     .clickable {
                         if (group.contact != null) {
                             onViewContact("contact_id_${group.contact.id}")
@@ -617,25 +656,9 @@ fun WhatsAppConversationCard(
                             onClick()
                         }
                     }
-            ) {
-                Surface(
-                    modifier = Modifier
-                        .size(46.dp)
-                        .shadow(2.dp, RoundedCornerShape(14.dp)),
-                    shape = RoundedCornerShape(14.dp),
-                    color = MaterialTheme.colorScheme.surface
-                ) {
-                    AppIcon(
-                        packageName = group.packageName,
-                        appName = groupTitle,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(1.dp)
-                    )
-                }
-            }
+            )
 
-            // Middle: Name, Email tag, VIP badge, App Name, and Recent Message Preview
+            // Middle: Name, VIP badge, and Recent Message Preview
             Column(modifier = Modifier.weight(1f)) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -650,17 +673,6 @@ fun WhatsAppConversationCard(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f, fill = false)
                     )
-
-                    val senderEmail = EmailUtils.cleanEmail(group.senderIdentifier)
-                    if (!senderEmail.isNullOrBlank() && !senderEmail.equals(groupTitle, ignoreCase = true)) {
-                        Text(
-                            text = "($senderEmail)",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
 
                     if (group.contact != null) {
                         Surface(
@@ -678,34 +690,6 @@ fun WhatsAppConversationCard(
                     }
                 }
 
-                val cleanReceiver = EmailUtils.cleanEmail(group.receiverIdentifier)
-
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    modifier = Modifier.padding(top = 1.dp)
-                ) {
-                    Text(
-                        text = appName,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    if (!cleanReceiver.isNullOrBlank()) {
-                        Text(
-                            text = "•",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-                        )
-                        Text(
-                            text = cleanReceiver,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                }
-
                 if (recentMessagePreview.isNotBlank()) {
                     Text(
                         text = recentMessagePreview,
@@ -715,30 +699,65 @@ fun WhatsAppConversationCard(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.padding(top = 2.dp)
                     )
+                } else {
+                    Text(
+                        text = "No messages",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                        fontStyle = FontStyle.Italic,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(top = 2.dp)
+                    )
                 }
             }
 
-            // Right Column: Timestamp + Dismiss Button
-            Column(
-                horizontalAlignment = Alignment.End,
-                verticalArrangement = Arrangement.spacedBy(4.dp)
+            // Right Column: Timestamp
+            Text(
+                text = formattedDate,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        // Long-press Context Menu anchored at touch position
+        Box(
+            modifier = Modifier
+                .offset(x = pressOffset.x, y = pressOffset.y)
+                .size(0.dp)
+        ) {
+            DropdownMenu(
+                expanded = showContextMenu,
+                onDismissRequest = { showContextMenu = false }
             ) {
-                Text(
-                    text = formattedDate,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                DropdownMenuItem(
+                    text = { Text("Delete") },
+                    onClick = {
+                        showContextMenu = false
+                        onDeleteConversation()
+                    },
+                    leadingIcon = {
+                        Icon(
+                            Icons.Default.Delete,
+                            contentDescription = "Delete conversation",
+                            tint = MaterialTheme.colorScheme.error
+                        )
+                    }
                 )
-                IconButton(
-                    onClick = onDismissGroup,
-                    modifier = Modifier.size(24.dp)
-                ) {
-                    Icon(
-                        Icons.Default.Close,
-                        contentDescription = "Dismiss conversation",
-                        modifier = Modifier.size(16.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+                DropdownMenuItem(
+                    text = { Text("Delete Chats") },
+                    onClick = {
+                        showContextMenu = false
+                        onDeleteChats()
+                    },
+                    leadingIcon = {
+                        Icon(
+                            Icons.Default.DeleteSweep,
+                            contentDescription = "Delete chats",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                )
             }
         }
     }

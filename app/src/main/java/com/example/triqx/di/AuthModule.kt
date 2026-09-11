@@ -1,7 +1,7 @@
 package com.example.triqx.di
 
-import com.example.triqx.data.remote.MockOtpAuthService
 import com.example.triqx.data.remote.OtpAuthService
+import com.example.triqx.data.remote.RealOtpAuthService
 import dagger.Binds
 import dagger.Module
 import dagger.hilt.InstallIn
@@ -15,6 +15,6 @@ abstract class AuthModule {
     @Binds
     @Singleton
     abstract fun bindOtpAuthService(
-        mockOtpAuthService: MockOtpAuthService
+        realOtpAuthService: RealOtpAuthService
     ): OtpAuthService
 }

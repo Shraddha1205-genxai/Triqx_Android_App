@@ -11,7 +11,7 @@ import androidx.room.TypeConverters
         NotificationEntity::class,
         ConversationEntity::class
     ],
-    version = 10,
+    version = 12,
     exportSchema = false
 )
 @TypeConverters(Converters::class)

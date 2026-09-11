@@ -258,7 +258,7 @@ class TriqxReplyReceiver : BroadcastReceiver() {
         )
 
         // 2. Conversation Entity
-        val current = conversationDao.getConversationByKey(conversationKey).firstOrNull()
+        val current = conversationDao.findConversationByKey(conversationKey)
         val parentSubject = current?.messages?.firstOrNull { !it.subText.isNullOrBlank() }?.subText
         val outgoingSubText = if (isEmailApp(packageName) && !parentSubject.isNullOrBlank()) {
             if (parentSubject.startsWith("Re:", ignoreCase = true)) parentSubject else "Re: $parentSubject"
@@ -285,9 +285,11 @@ class TriqxReplyReceiver : BroadcastReceiver() {
             receiverIdentifier = EmailUtils.cleanEmail(receiverIdentifier) ?: current?.receiverIdentifier,
             messages = updatedMessages,
             latestTimestamp = timestamp,
-            latestNotificationKey = notificationKey
+            latestNotificationKey = notificationKey,
+            customPrompt = current?.customPrompt,
+            replyCount = current?.replyCount
         )
-        conversationDao.insertOrUpdate(entityToSave)
+        conversationDao.upsertPreservingAiSettings(entityToSave)
 
         Log.i(TAG, "===> [CONVERSATION TABLE OUTGOING] key='$conversationKey', title='$cleanTitle', replyText='$replyText', totalMsgs=${updatedMessages.size}")
     }

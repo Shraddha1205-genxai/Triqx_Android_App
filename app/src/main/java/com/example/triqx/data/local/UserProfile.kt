@@ -12,13 +12,15 @@ package com.example.triqx.data.local
  * @param isFirstLogin True if the user has just logged in and has not completed profile setup
  */
 data class UserProfile(
+    val id: Int? = null,
     val firstName: String = "",
     val lastName: String = "",
     val phoneNumbers: List<String> = emptyList(),
     val emails: List<String> = emptyList(),
     val aboutMe: String = "",
     val professionalDetails: String = "",
-    val isFirstLogin: Boolean = true
+    val isFirstLogin: Boolean = true,
+    val mobileNumber: String? = null
 ) {
     val fullName: String
         get() {
@@ -27,7 +29,7 @@ data class UserProfile(
         }
 
     val primaryPhone: String
-        get() = phoneNumbers.firstOrNull() ?: ""
+        get() = mobileNumber?.takeIf { it.isNotBlank() } ?: phoneNumbers.firstOrNull() ?: ""
 
     val primaryEmail: String?
         get() = emails.firstOrNull()

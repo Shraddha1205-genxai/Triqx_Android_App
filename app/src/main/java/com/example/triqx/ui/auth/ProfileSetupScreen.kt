@@ -1,4 +1,4 @@
-﻿package com.example.triqx.ui.auth
+package com.example.triqx.ui.auth
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -45,6 +45,7 @@ fun ProfileSetupScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
                 .statusBarsPadding()
+                .padding(top = Dimens.ScreenTopPadding)
                 .navigationBarsPadding()
         ) {
             // Top Bar with Capsule Step Indicator (No Skip - Profile is required)

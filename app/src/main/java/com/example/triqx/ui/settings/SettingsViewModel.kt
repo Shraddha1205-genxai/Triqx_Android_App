@@ -39,6 +39,10 @@ class SettingsViewModel @Inject constructor(
 
     val apiKey: StateFlow<String> = openAiRepository.apiKey
     val selectedModel: StateFlow<String> = openAiRepository.selectedModel
+    val backendBaseUrl: StateFlow<String> = openAiRepository.backendBaseUrl
+    val replyStyle: StateFlow<String> = openAiRepository.replyStyle
+    val additionalPrompt: StateFlow<String> = openAiRepository.additionalPrompt
+    val defaultReplyCount: StateFlow<Int> = openAiRepository.defaultReplyCount
     val gmailAccount: StateFlow<EmailAccountEntity?> = emailAccountStore.gmailAccount
     val connectedAccounts: StateFlow<List<EmailAccountEntity>> = emailAccountStore.connectedAccounts
 
@@ -75,6 +79,52 @@ class SettingsViewModel @Inject constructor(
         _notificationReplyStyle.value = style
     }
 
+    fun saveBackendBaseUrl(url: String) {
+        openAiRepository.setBackendBaseUrl(url)
+        _testResult.value = "Backend URL saved."
+    }
+
+    fun saveReplyStyle(style: String) {
+        openAiRepository.setReplyStyle(style)
+    }
+
+    fun saveAdditionalPrompt(prompt: String) {
+        openAiRepository.setAdditionalPrompt(prompt)
+    }
+
+    fun saveDefaultReplyCount(count: Int) {
+        openAiRepository.setDefaultReplyCount(count)
+        _testResult.value = "Default replies set to $count."
+    }
+
+    fun testBackendConnection(
+        url: String = backendBaseUrl.value,
+        replyStyle: String = "Concise",
+        additionalPrompt: String? = null
+    ) {
+        viewModelScope.launch {
+            _isTesting.value = true
+            _testResult.value = null
+            val result = openAiRepository.testConnection(
+                baseUrl = url,
+                replyStyle = replyStyle,
+                additionalPrompt = additionalPrompt
+            )
+            result.onSuccess { msg ->
+                _testResult.value = msg
+            }.onFailure { err ->
+                val errorText = when {
+                    err is java.net.SocketTimeoutException || err.message?.contains("timeout", ignoreCase = true) == true ->
+                        "Connection timed out. The AI model or server took longer to respond. Please try again."
+                    else ->
+                        "Error: ${err.message ?: "Failed to connect to backend AI"}"
+                }
+                _testResult.value = errorText
+            }
+            _isTesting.value = false
+        }
+    }
+
     fun saveApiKey(key: String) {
         openAiRepository.setApiKey(key)
         _testResult.value = "API Key saved successfully."
@@ -92,7 +142,7 @@ class SettingsViewModel @Inject constructor(
             result.onSuccess { msg ->
                 _testResult.value = msg
             }.onFailure { err ->
-                _testResult.value = "Error: ${err.message ?: "Failed to connect to OpenAI"}"
+                _testResult.value = "Error: ${err.message ?: "Failed to connect to AI service"}"
             }
             _isTesting.value = false
         }
@@ -193,10 +243,14 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun updateUserProfile(profile: UserProfile) {
-        authRepository.updateProfile(profile)
+        viewModelScope.launch {
+            authRepository.updateProfile(profile)
+        }
     }
 
     fun logout() {
-        authRepository.logout()
+        viewModelScope.launch {
+            authRepository.logout()
+        }
     }
 }

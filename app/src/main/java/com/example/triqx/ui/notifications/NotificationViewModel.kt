@@ -44,7 +44,9 @@ data class Conversation(
     val messages: List<ChatMessage>,             // Conversation messages (newest first)
     val latestTimestamp: Long,                   // Timestamp of the latest message
     val canReply: Boolean,                       // Whether RemoteInput reply is available
-    val latestNotificationKey: String            // Android notification key for reply/dismiss
+    val latestNotificationKey: String,           // Android notification key for reply/dismiss
+    val customPrompt: String? = null,            // Conversation-specific AI prompt
+    val replyCount: Int? = null                  // Conversation-specific number of replies
 ) {
     // Backward-compatibility getters
     val specificIdentifier: String? get() = senderIdentifier
@@ -60,7 +62,7 @@ class NotificationViewModel @Inject constructor(
     private val openAiRepository: OpenAiRepository,
     val emailAccountStore: com.example.triqx.data.local.EmailAccountStore,
     val emailReplyDispatcher: com.example.triqx.service.EmailReplyDispatcher,
-    @ApplicationContext private val context: Context
+    @param:ApplicationContext private val context: Context
 ) : ViewModel() {
 
     // =============================
@@ -143,10 +145,7 @@ class NotificationViewModel @Inject constructor(
         contacts: List<ContactEntity>
     ): List<Conversation> {
         val contactsMap = contacts.associateBy { it.id }
-        return conversations.mapNotNull { entity ->
-            // Skip conversations with no messages
-            if (entity.messages.isEmpty()) return@mapNotNull null
-
+        return conversations.map { entity ->
             // Resolve contact from contactId in O(1) time
             val contact = entity.contactId?.let { id -> contactsMap[id] }
 
@@ -162,7 +161,9 @@ class NotificationViewModel @Inject constructor(
                 messages = entity.messages,
                 latestTimestamp = entity.latestTimestamp,
                 canReply = canReplyAny,
-                latestNotificationKey = entity.latestNotificationKey ?: ""
+                latestNotificationKey = entity.latestNotificationKey ?: "",
+                customPrompt = entity.customPrompt,
+                replyCount = entity.replyCount
             )
         }.sortedByDescending { it.latestTimestamp }
     }
@@ -357,7 +358,7 @@ class NotificationViewModel @Inject constructor(
             )
 
             if (groupKey != null) {
-                val current = conversationDao.getConversationByKey(groupKey).firstOrNull()
+                val current = conversationDao.findConversationByKey(groupKey)
                 val parentSubject = current?.messages?.firstOrNull { !it.subText.isNullOrBlank() }?.subText
                 val outgoingSubText = if (isEmailApp(packageName) && !parentSubject.isNullOrBlank()) {
                     if (parentSubject.startsWith("Re:", ignoreCase = true)) parentSubject else "Re: $parentSubject"
@@ -376,19 +377,20 @@ class NotificationViewModel @Inject constructor(
                 // Preserve existing conversation title (never overwrite with "You")
                 val cleanTitle = current?.title ?: (contact?.displayName ?: packageName)
 
-                conversationDao.insertOrUpdate(
-                    ConversationEntity(
-                        conversationKey = groupKey,
-                        packageName = packageName,
-                        contactId = contact?.id ?: current?.contactId,
-                        title = cleanTitle,
-                        senderIdentifier = EmailUtils.cleanEmail(senderIdentifier) ?: current?.senderIdentifier,
-                        receiverIdentifier = EmailUtils.cleanEmail(receiverIdentifier) ?: current?.receiverIdentifier,
-                        messages = updatedMessages,
-                        latestTimestamp = timestamp,
-                        latestNotificationKey = notificationKey
-                    )
+                val entityToSave = ConversationEntity(
+                    conversationKey = groupKey,
+                    packageName = packageName,
+                    contactId = contact?.id ?: current?.contactId,
+                    title = cleanTitle,
+                    senderIdentifier = EmailUtils.cleanEmail(senderIdentifier) ?: current?.senderIdentifier,
+                    receiverIdentifier = EmailUtils.cleanEmail(receiverIdentifier) ?: current?.receiverIdentifier,
+                    messages = updatedMessages,
+                    latestTimestamp = timestamp,
+                    latestNotificationKey = notificationKey,
+                    customPrompt = current?.customPrompt,
+                    replyCount = current?.replyCount
                 )
+                conversationDao.upsertPreservingAiSettings(entityToSave)
 
                 Log.i("TriqxReply", "===> [CONVERSATION TABLE OUTGOING] key='$groupKey', title='$cleanTitle', replyText='$replyText', totalMsgs=${updatedMessages.size}")
             }
@@ -411,13 +413,34 @@ class NotificationViewModel @Inject constructor(
     }
 
     fun dismissGroup(group: Conversation) {
+        deleteConversation(group)
+    }
+
+    fun deleteConversation(group: Conversation) {
         viewModelScope.launch(Dispatchers.IO) {
             // Dismiss the Android notification
             if (group.latestNotificationKey.isNotBlank()) {
                 TriqxNotificationListenerService.instance?.dismissNotification(group.latestNotificationKey)
+                notificationDao.deleteNotificationByKey(group.latestNotificationKey)
             }
+            notificationDao.deleteByPackageAndTitle(group.packageName, group.title)
             // Delete conversation from conversations table
             conversationDao.deleteByKey(group.groupKey)
+            openAiRepository.clearRepliesForGroup(group.groupKey)
+        }
+    }
+
+    fun deleteChats(group: Conversation) {
+        viewModelScope.launch(Dispatchers.IO) {
+            // Dismiss the Android notification
+            if (group.latestNotificationKey.isNotBlank()) {
+                TriqxNotificationListenerService.instance?.dismissNotification(group.latestNotificationKey)
+                notificationDao.deleteNotificationByKey(group.latestNotificationKey)
+            }
+            notificationDao.deleteByPackageAndTitle(group.packageName, group.title)
+            // Clear only the messages in the conversation entity
+            conversationDao.clearMessages(group.groupKey)
+            openAiRepository.clearRepliesForGroup(group.groupKey)
         }
     }
 
@@ -444,6 +467,30 @@ class NotificationViewModel @Inject constructor(
 
     fun regenerateRepliesForGroup(group: Conversation) {
         openAiRepository.regenerateReplies(group.groupKey, group.title, group.messages)
+    }
+
+    fun updateConversationAiSettings(
+        groupKey: String,
+        customPrompt: String?,
+        replyCount: Int?,
+        packageName: String = "",
+        title: String = ""
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val cleanPrompt = customPrompt?.trim()?.ifBlank { null }
+            conversationDao.setConversationAiSettings(
+                key = groupKey,
+                packageName = packageName.ifBlank { extractPackageFromGroupKey(groupKey) },
+                title = title.ifBlank { groupKey },
+                customPrompt = cleanPrompt,
+                replyCount = replyCount
+            )
+            openAiRepository.invalidateCache(groupKey)
+            val current = conversationDao.findConversationByKey(groupKey)
+            if (current != null && current.messages.isNotEmpty()) {
+                openAiRepository.regenerateReplies(current.conversationKey, current.title, current.messages)
+            }
+        }
     }
 
     // =============================
@@ -474,5 +521,13 @@ class NotificationViewModel @Inject constructor(
     private fun isEmailApp(packageName: String): Boolean {
         return packageName.contains("gm") || packageName.contains("email")
             || packageName.contains("outlook") || packageName.contains("mail")
+    }
+
+    private fun extractPackageFromGroupKey(groupKey: String): String {
+        return when {
+            groupKey.contains(":") -> groupKey.substringBefore(":")
+            groupKey.contains("_") -> groupKey.substringBefore("_")
+            else -> groupKey
+        }
     }
 }

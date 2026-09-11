@@ -2,6 +2,7 @@ package com.example.triqx.ui.auth
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.triqx.data.model.Country
 import com.example.triqx.data.repository.AuthRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
@@ -24,6 +25,9 @@ enum class LoginStep {
 data class LoginUiState(
     val step: LoginStep = LoginStep.PHONE_INPUT,
     val countryCode: String = "+91",
+    val countryName: String = "India",
+    val countryIso: String = "IN",
+    val countryFlag: String = "🇮🇳",
     val phoneNumber: String = "",
     val otpCode: String = "",
     val countdownSeconds: Int = 30,
@@ -34,7 +38,7 @@ data class LoginUiState(
         get() = "${countryCode.trim()} ${phoneNumber.trim()}"
 
     val isPhoneValid: Boolean
-        get() = phoneNumber.trim().length in 10..12 && phoneNumber.trim().all { it.isDigit() }
+        get() = phoneNumber.trim().length in 7..15 && phoneNumber.trim().all { it.isDigit() }
 
     val canResendOtp: Boolean
         get() = countdownSeconds == 0 && !isLoading
@@ -61,8 +65,20 @@ class LoginViewModel @Inject constructor(
     private var countdownJob: Job? = null
 
     fun onPhoneNumberChange(newPhone: String) {
-        val digitsOnly = newPhone.filter { it.isDigit() }.take(12)
+        val digitsOnly = newPhone.filter { it.isDigit() }.take(15)
         _uiState.update { it.copy(phoneNumber = digitsOnly, errorMessage = null) }
+    }
+
+    fun onCountrySelected(country: Country) {
+        _uiState.update {
+            it.copy(
+                countryCode = country.code,
+                countryName = country.name,
+                countryIso = country.isoCode,
+                countryFlag = country.flagEmoji,
+                errorMessage = null
+            )
+        }
     }
 
     fun onCountryCodeChange(newCode: String) {
@@ -82,7 +98,7 @@ class LoginViewModel @Inject constructor(
     fun onSendOtp() {
         val state = _uiState.value
         if (!state.isPhoneValid) {
-            _uiState.update { it.copy(errorMessage = "Please enter a valid 10-digit mobile number") }
+            _uiState.update { it.copy(errorMessage = "Please enter a valid mobile number") }
             return
         }
 
@@ -129,7 +145,7 @@ class LoginViewModel @Inject constructor(
                 _uiState.update {
                     it.copy(
                         isLoading = false,
-                        errorMessage = err.message ?: "Incorrect OTP. Please enter 123456."
+                        errorMessage = err.message ?: "Invalid OTP. Please check the code and try again."
                     )
                 }
             }

@@ -1,4 +1,4 @@
-﻿package com.example.triqx.ui.theme
+package com.example.triqx.ui.theme
 
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.unit.Dp
@@ -7,13 +7,20 @@ import androidx.compose.ui.unit.dp
 object Dimens {
     // Spacing
     val SpacingNone: Dp = 0.dp
+    val SpacingPico: Dp = 1.dp
+    val SpacingNano: Dp = 2.dp
     val SpacingMicro: Dp = 4.dp
+    val SpacingCompact: Dp = 6.dp
     val SpacingSmall: Dp = 8.dp
+    val SpacingSemiMedium: Dp = 10.dp
     val SpacingMedium: Dp = 12.dp
     val SpacingStandard: Dp = 16.dp
     val SpacingLarge: Dp = 20.dp
     val SpacingExtraLarge: Dp = 24.dp
     val SpacingHuge: Dp = 32.dp
+
+    // Screen Layout Spacing
+    val ScreenTopPadding: Dp = SpacingSmall
 
     // Corner Radii
     val CardCornerRadius: Dp = 16.dp
@@ -32,7 +39,7 @@ object Dimens {
 
     // Component Dimensions
     val ButtonHeight: Dp = 50.dp
-    val SearchBarHeight: Dp = 52.dp
+    val SearchBarHeight: Dp = 50.dp
     val KeypadButtonHeight: Dp = 52.dp
     val TopBarPillHeight: Dp = 4.dp
 
@@ -48,4 +55,9 @@ object Dimens {
     val AvatarSizeMedium: Dp = 44.dp
     val AvatarSizeLarge: Dp = 56.dp
     val AvatarSizeExtraLarge: Dp = 80.dp
+
+    // Animation Durations (ms)
+    const val AnimDurationFast: Int = 140
+    const val AnimDurationStandard: Int = 180
+    const val AnimDurationMedium: Int = 220
 }

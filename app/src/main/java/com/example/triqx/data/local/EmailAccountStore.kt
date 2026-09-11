@@ -272,4 +272,15 @@ class EmailAccountStore @Inject constructor(
             if (clean.isNullOrBlank()) false else accounts.any { it.emailAddress.equals(clean, ignoreCase = true) }
         }
     }
+
+    /**
+     * Completely wipes all connected email accounts and stored tokens from the device.
+     */
+    @Synchronized
+    fun clearAll() {
+        prefs.edit().clear().apply()
+        _connectedAccounts.value = emptyList()
+        _gmailAccount.value = null
+        Log.i(TAG, "Cleared all connected email accounts and credentials from device.")
+    }
 }

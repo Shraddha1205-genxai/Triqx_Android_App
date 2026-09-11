@@ -5,6 +5,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.RemoteInput
@@ -25,6 +26,8 @@ object TriqxAssistantNotificationManager {
     const val CHANNEL_NAME = "Triqx AI Assistant"
     const val CHANNEL_DESC = "Real-time AI suggested replies for priority conversations"
     const val NOTIFICATION_ID = 1001
+    const val ACTION_OPEN_CONVERSATION = "com.example.triqx.ACTION_OPEN_CONVERSATION"
+    const val EXTRA_CONVERSATION_KEY = "extra_conversation_key"
 
     // =============================
     // Channel Setup
@@ -58,77 +61,100 @@ object TriqxAssistantNotificationManager {
         contactId: Int?,
         senderIdentifier: String?,
         receiverIdentifier: String? = null,
-        messages: List<NotificationEntity>,
+        latestMessageText: String,
+        timestamp: Long = System.currentTimeMillis(),
         smartReplies: List<String>
     ) {
         createNotificationChannel(context)
-        if (messages.isEmpty()) return
+        if (latestMessageText.isBlank()) return
 
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val tag = getNotificationTag(groupKey)
-        val latest = messages.first()
 
-        // Build conversation summary (last 4 messages, oldest first)
-        val conversationSummary = messages.take(4).reversed().joinToString("\n") { notif ->
-            val sender = if (notif.title.equals("You", ignoreCase = true)) "You" else contactOrTitle
-            "$sender: ${notif.text ?: ""}"
-        }
+        // Show max 2 lines of user message so AI replies have full priority
+        val truncatedMessage = truncateToTwoLines(latestMessageText)
 
-        // Read user's selected notification style
-        val prefs = context.getSharedPreferences("triqx_settings_prefs", Context.MODE_PRIVATE)
-        val style = prefs.getString("notification_reply_style", "body_numbered") ?: "body_numbered"
+        // Show replies as numbered bullets in the body
+        val replyList = smartReplies.take(3).mapIndexed { i, r ->
+            "${numberEmoji(i)} \"$r\""
+        }.joinToString("\n")
 
-        // Build the BigTextStyle body
-        val bigTextStyle = NotificationCompat.BigTextStyle()
-        if (style == "body_numbered") {
-            // Show replies as numbered bullets in the body
-            val replyList = smartReplies.take(3).mapIndexed { i, r ->
-                "${numberEmoji(i)} \"$r\""
-            }.joinToString("\n")
-
-            val fullBody = if (replyList.isNotBlank()) {
-                "$conversationSummary\n\n✨ AI Suggested Replies:\n$replyList"
-            } else {
-                conversationSummary
-            }
-            bigTextStyle.bigText(fullBody)
+        val fullBody = if (replyList.isNotBlank()) {
+            "$truncatedMessage\n\n✨ AI Suggested Replies:\n$replyList"
         } else {
-            // Clean body (replies shown as native chips instead)
-            bigTextStyle.bigText(conversationSummary)
+            truncatedMessage
         }
-        bigTextStyle.setBigContentTitle(contactOrTitle)
-        bigTextStyle.setSummaryText("Triqx AI Assistant")
 
-        // Content tap -> open app
+        val bigTextStyle = NotificationCompat.BigTextStyle()
+            .bigText(fullBody)
+            .setBigContentTitle(contactOrTitle)
+            .setSummaryText("Triqx AI Assistant")
+
+        // Content tap -> open conversation directly in Triqx
+        val openIntent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            action = ACTION_OPEN_CONVERSATION
+            putExtra(EXTRA_CONVERSATION_KEY, groupKey)
+            data = Uri.parse("triqx://chat/${Uri.encode(groupKey)}")
+        }
+
         val contentIntent = PendingIntent.getActivity(
             context,
             groupKey.hashCode(),
-            Intent(context, MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            },
+            openIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
+
+        val singleLinePreview = latestMessageText.replace('\n', ' ').trim().let {
+            if (it.length > 70) it.take(70).trimEnd() + "…" else it
+        }
 
         val builder = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle(contactOrTitle)
-            .setContentText(latest.text ?: "New message")
+            .setContentText(singleLinePreview)
             .setStyle(bigTextStyle)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .setAutoCancel(true)
             .setContentIntent(contentIntent)
-            .setWhen(latest.timestamp)
+            .setWhen(timestamp)
             .setShowWhen(true)
 
-        // Add action buttons based on style
-        if (style == "body_numbered") {
-            addNumberedActions(context, builder, groupKey, packageName, notificationKey, contactId, senderIdentifier, receiverIdentifier, contactOrTitle, smartReplies)
-        } else {
-            addChipActions(context, builder, groupKey, packageName, notificationKey, contactId, senderIdentifier, receiverIdentifier, contactOrTitle, smartReplies)
-        }
+        // Always add numbered send buttons + edit action
+        addNumberedActions(context, builder, groupKey, packageName, notificationKey, contactId, senderIdentifier, receiverIdentifier, contactOrTitle, smartReplies)
 
         manager.notify(tag, NOTIFICATION_ID, builder.build())
+    }
+
+    /** Backward-compatibility overload accepting NotificationEntity list */
+    fun postOrUpdateAssistantNotification(
+        context: Context,
+        groupKey: String,
+        contactOrTitle: String,
+        packageName: String,
+        notificationKey: String,
+        contactId: Int?,
+        senderIdentifier: String?,
+        receiverIdentifier: String? = null,
+        messages: List<NotificationEntity>,
+        smartReplies: List<String>
+    ) {
+        val latestText = messages.firstOrNull()?.text.orEmpty()
+        val latestTime = messages.firstOrNull()?.timestamp ?: System.currentTimeMillis()
+        postOrUpdateAssistantNotification(
+            context = context,
+            groupKey = groupKey,
+            contactOrTitle = contactOrTitle,
+            packageName = packageName,
+            notificationKey = notificationKey,
+            contactId = contactId,
+            senderIdentifier = senderIdentifier,
+            receiverIdentifier = receiverIdentifier,
+            latestMessageText = latestText,
+            timestamp = latestTime,
+            smartReplies = smartReplies
+        )
     }
 
     // =============================
@@ -136,7 +162,6 @@ object TriqxAssistantNotificationManager {
     // =============================
 
     fun cancelNotification(context: Context, groupKey: String) {
-
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         manager.cancel(getNotificationTag(groupKey), NOTIFICATION_ID)
     }
@@ -145,7 +170,7 @@ object TriqxAssistantNotificationManager {
     // Action Builders (Private)
     // =============================
 
-    /** Approach 1: Numbered send buttons + edit action. */
+    /** Numbered send buttons + edit action. */
     private fun addNumberedActions(
         context: Context,
         builder: NotificationCompat.Builder,
@@ -191,50 +216,34 @@ object TriqxAssistantNotificationManager {
         )
     }
 
-    /** Approach 3: Native smart reply chips + quick send buttons. */
-    private fun addChipActions(
-        context: Context,
-        builder: NotificationCompat.Builder,
-        groupKey: String,
-        packageName: String,
-        notificationKey: String,
-        contactId: Int?,
-        senderIdentifier: String?,
-        receiverIdentifier: String?,
-        contactOrTitle: String,
-        smartReplies: List<String>
-    ) {
-        // Smart reply chip with choices dropdown
-        val chipIntent = createReplyIntent(context, TriqxReplyReceiver.ACTION_CUSTOM_REPLY,
-            groupKey, packageName, notificationKey, contactId, senderIdentifier, receiverIdentifier, contactOrTitle)
+    /**
+     * Truncates message to at most 2 lines, keeping user message concise so AI replies have full priority.
+     */
+    private fun truncateToTwoLines(text: String, maxCharsPerLine: Int = 60): String {
+        val clean = text.trim()
+        val rawLines = clean.lines().map { it.trim() }.filter { it.isNotEmpty() }
 
-        val chipPending = PendingIntent.getBroadcast(
-            context, (groupKey.hashCode() * 10) + 9, chipIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
-        )
-
-        val remoteInput = RemoteInput.Builder(TriqxReplyReceiver.KEY_TEXT_REPLY)
-            .setLabel("Reply with AI...")
-            .setChoices(smartReplies.take(3).toTypedArray())
-            .build()
-
-        builder.addAction(
-            NotificationCompat.Action.Builder(0, "💬 Smart Reply", chipPending)
-                .addRemoteInput(remoteInput)
-                .build()
-        )
-
-        // Quick send buttons (first 2 replies)
-        smartReplies.take(2).forEachIndexed { index, replyText ->
-            val intent = createReplyIntent(context, TriqxReplyReceiver.ACTION_SMART_REPLY,
-                groupKey, packageName, notificationKey, contactId, senderIdentifier, receiverIdentifier, contactOrTitle, replyText)
-
-            val pendingIntent = PendingIntent.getBroadcast(
-                context, (groupKey.hashCode() * 10) + index, intent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
-            )
-
-            builder.addAction(NotificationCompat.Action.Builder(0, "✨ $replyText", pendingIntent).build())
+        return if (rawLines.size > 1) {
+            val line1 = if (rawLines[0].length > maxCharsPerLine) rawLines[0].take(maxCharsPerLine).trimEnd() + "…" else rawLines[0]
+            val line2 = if (rawLines.size > 2 || rawLines[1].length > maxCharsPerLine) {
+                rawLines[1].take(maxCharsPerLine).trimEnd() + "…"
+            } else {
+                rawLines[1]
+            }
+            "$line1\n$line2"
+        } else {
+            if (clean.length <= maxCharsPerLine) {
+                clean
+            } else if (clean.length <= maxCharsPerLine * 2) {
+                val splitIndex = clean.lastIndexOf(' ', maxCharsPerLine).takeIf { it > 20 } ?: maxCharsPerLine
+                "${clean.substring(0, splitIndex).trimEnd()}\n${clean.substring(splitIndex).trimStart()}"
+            } else {
+                val splitIndex = clean.lastIndexOf(' ', maxCharsPerLine).takeIf { it > 20 } ?: maxCharsPerLine
+                val line1 = clean.substring(0, splitIndex).trimEnd()
+                val remainder = clean.substring(splitIndex).trimStart()
+                val line2 = if (remainder.length > maxCharsPerLine) remainder.take(maxCharsPerLine).trimEnd() + "…" else remainder
+                "$line1\n$line2"
+            }
         }
     }
 

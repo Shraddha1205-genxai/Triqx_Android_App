@@ -29,6 +29,8 @@ class UserSessionManager @Inject constructor(
 
         private const val KEY_IS_LOGGED_IN = "is_logged_in"
         private const val KEY_AUTH_TOKEN = "auth_token"
+        private const val KEY_ACCESS_TOKEN = "access_token"
+        private const val KEY_REFRESH_TOKEN = "refresh_token"
         private const val KEY_USER_PROFILE_JSON = "user_profile_json"
     }
 
@@ -70,6 +72,21 @@ class UserSessionManager @Inject constructor(
     }
 
     @Synchronized
+    fun saveAuthSession(profile: UserProfile, accessToken: String, refreshToken: String) {
+        val json = gson.toJson(profile)
+        prefs.edit()
+            .putBoolean(KEY_IS_LOGGED_IN, true)
+            .putString(KEY_AUTH_TOKEN, accessToken)
+            .putString(KEY_ACCESS_TOKEN, accessToken)
+            .putString(KEY_REFRESH_TOKEN, refreshToken)
+            .putString(KEY_USER_PROFILE_JSON, json)
+            .apply()
+
+        _userProfile.value = profile
+        _isLoggedIn.value = true
+    }
+
+    @Synchronized
     fun saveSession(verifiedPhoneNumber: String, token: String) {
         val current = _userProfile.value
         val initialProfile = if (current != null) {
@@ -78,10 +95,11 @@ class UserSessionManager @Inject constructor(
             } else {
                 listOf(verifiedPhoneNumber) + current.phoneNumbers
             }
-            current.copy(phoneNumbers = phones)
+            current.copy(phoneNumbers = phones, mobileNumber = verifiedPhoneNumber)
         } else {
             UserProfile(
                 phoneNumbers = listOf(verifiedPhoneNumber),
+                mobileNumber = verifiedPhoneNumber,
                 isFirstLogin = true
             )
         }
@@ -90,11 +108,21 @@ class UserSessionManager @Inject constructor(
         prefs.edit()
             .putBoolean(KEY_IS_LOGGED_IN, true)
             .putString(KEY_AUTH_TOKEN, token)
+            .putString(KEY_ACCESS_TOKEN, token)
             .putString(KEY_USER_PROFILE_JSON, json)
             .apply()
 
         _userProfile.value = initialProfile
         _isLoggedIn.value = true
+    }
+
+    @Synchronized
+    fun updateTokens(accessToken: String, refreshToken: String) {
+        prefs.edit()
+            .putString(KEY_AUTH_TOKEN, accessToken)
+            .putString(KEY_ACCESS_TOKEN, accessToken)
+            .putString(KEY_REFRESH_TOKEN, refreshToken)
+            .apply()
     }
 
     @Synchronized
@@ -107,8 +135,16 @@ class UserSessionManager @Inject constructor(
         _userProfile.value = profile
     }
 
+    fun getAccessToken(): String? {
+        return prefs.getString(KEY_ACCESS_TOKEN, null) ?: prefs.getString(KEY_AUTH_TOKEN, null)
+    }
+
+    fun getRefreshToken(): String? {
+        return prefs.getString(KEY_REFRESH_TOKEN, null)
+    }
+
     fun getAuthToken(): String? {
-        return prefs.getString(KEY_AUTH_TOKEN, null)
+        return getAccessToken()
     }
 
     @Synchronized

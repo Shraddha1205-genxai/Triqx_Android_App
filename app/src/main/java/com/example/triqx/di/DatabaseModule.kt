@@ -18,6 +18,20 @@ import javax.inject.Singleton
 @InstallIn(SingletonComponent::class)
 object DatabaseModule {
 
+    private val MIGRATION_10_11 = object : androidx.room.migration.Migration(10, 11) {
+        override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE important_apps ADD COLUMN prompt TEXT DEFAULT NULL")
+        }
+    }
+
+    private val MIGRATION_11_12 = object : androidx.room.migration.Migration(11, 12) {
+        override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE important_apps ADD COLUMN replyStyle TEXT DEFAULT 'Concise'")
+            db.execSQL("ALTER TABLE conversations ADD COLUMN customPrompt TEXT DEFAULT NULL")
+            db.execSQL("ALTER TABLE conversations ADD COLUMN replyCount INTEGER DEFAULT NULL")
+        }
+    }
+
     @Provides
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): AppDatabase {
@@ -26,6 +40,7 @@ object DatabaseModule {
             AppDatabase::class.java,
             "triqx_database"
         )
+        .addMigrations(MIGRATION_10_11, MIGRATION_11_12)
         .fallbackToDestructiveMigration()
         .build()
     }

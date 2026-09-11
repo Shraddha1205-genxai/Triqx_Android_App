@@ -1,13 +1,17 @@
-﻿package com.example.triqx.ui.auth
+package com.example.triqx.ui.auth
 
 import androidx.compose.animation.*
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -18,6 +22,8 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.example.triqx.data.model.Country
+import com.example.triqx.ui.auth.components.CountryPickerBottomSheet
 import com.example.triqx.ui.auth.components.OtpInputField
 import com.example.triqx.ui.components.M3ExpressiveButton
 import com.example.triqx.ui.components.M3ExpressiveKeypad
@@ -50,6 +56,7 @@ fun LoginScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
                 .statusBarsPadding()
+                .padding(top = Dimens.ScreenTopPadding)
                 .navigationBarsPadding()
         ) {
             // Top Bar with Capsule Step Indicators
@@ -68,12 +75,16 @@ fun LoginScreen(
                 targetState = uiState.step,
                 transitionSpec = {
                     if (targetState == LoginStep.OTP_VERIFICATION) {
-                        (slideInHorizontally { width -> width } + fadeIn()).togetherWith(
-                            slideOutHorizontally { width -> -width } + fadeOut()
+                        (slideInHorizontally(animationSpec = tween(durationMillis = Dimens.AnimDurationMedium, easing = FastOutSlowInEasing)) { width -> width } +
+                                fadeIn(animationSpec = tween(durationMillis = Dimens.AnimDurationStandard))).togetherWith(
+                            slideOutHorizontally(animationSpec = tween(durationMillis = Dimens.AnimDurationMedium, easing = FastOutSlowInEasing)) { width -> -width } +
+                                    fadeOut(animationSpec = tween(durationMillis = Dimens.AnimDurationFast))
                         )
                     } else {
-                        (slideInHorizontally { width -> -width } + fadeIn()).togetherWith(
-                            slideOutHorizontally { width -> width } + fadeOut()
+                        (slideInHorizontally(animationSpec = tween(durationMillis = Dimens.AnimDurationMedium, easing = FastOutSlowInEasing)) { width -> -width } +
+                                fadeIn(animationSpec = tween(durationMillis = Dimens.AnimDurationStandard))).togetherWith(
+                            slideOutHorizontally(animationSpec = tween(durationMillis = Dimens.AnimDurationMedium, easing = FastOutSlowInEasing)) { width -> width } +
+                                    fadeOut(animationSpec = tween(durationMillis = Dimens.AnimDurationFast))
                         )
                     }
                 },
@@ -85,7 +96,7 @@ fun LoginScreen(
                         PhoneInputExpressive(
                             uiState = uiState,
                             onPhoneChange = viewModel::onPhoneNumberChange,
-                            onCountryCodeChange = viewModel::onCountryCodeChange,
+                            onCountrySelected = viewModel::onCountrySelected,
                             onSendOtp = viewModel::onSendOtp
                         )
                     }
@@ -111,10 +122,11 @@ fun LoginScreen(
 private fun PhoneInputExpressive(
     uiState: LoginUiState,
     onPhoneChange: (String) -> Unit,
-    onCountryCodeChange: (String) -> Unit,
+    onCountrySelected: (Country) -> Unit,
     onSendOtp: () -> Unit
 ) {
     val focusManager = LocalFocusManager.current
+    var showCountryPicker by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -151,10 +163,15 @@ private fun PhoneInputExpressive(
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(Dimens.SpacingMedium)) {
                     Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(Dimens.SquircleShape)
+                            .clickable { showCountryPicker = true }
+                            .padding(vertical = Dimens.SpacingMicro),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(Dimens.SpacingMedium)
                     ) {
-                        // Circular Icon Badge
+                        // Flag Emoji Badge
                         Box(
                             contentAlignment = Alignment.Center,
                             modifier = Modifier
@@ -162,11 +179,9 @@ private fun PhoneInputExpressive(
                                 .clip(CircleShape)
                                 .background(MaterialTheme.colorScheme.primaryContainer)
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.Phone,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                                modifier = Modifier.size(Dimens.IconSizeMedium)
+                            Text(
+                                text = uiState.countryFlag,
+                                style = MaterialTheme.typography.titleLarge
                             )
                         }
 
@@ -177,19 +192,30 @@ private fun PhoneInputExpressive(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             Text(
-                                text = "India (IN)",
+                                text = "${uiState.countryName} (${uiState.countryIso})",
                                 style = MaterialTheme.typography.bodyLarge,
                                 fontWeight = FontWeight.SemiBold,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                         }
 
-                        Text(
-                            text = uiState.countryCode,
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(Dimens.SpacingMicro)
+                        ) {
+                            Text(
+                                text = uiState.countryCode,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Icon(
+                                imageVector = Icons.Default.ArrowDropDown,
+                                contentDescription = "Select country",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
                     }
 
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
@@ -201,25 +227,6 @@ private fun PhoneInputExpressive(
                         placeholder = "Phone number",
                         isError = uiState.errorMessage != null
                     )
-
-                    // Helper Demo Note
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "Test OTP code",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Text(
-                            text = "123456",
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    }
                 }
             }
 
@@ -251,6 +258,17 @@ private fun PhoneInputExpressive(
             enabled = uiState.isPhoneValid,
             isLoading = uiState.isLoading
         )
+
+        if (showCountryPicker) {
+            CountryPickerBottomSheet(
+                selectedCountryCode = uiState.countryCode,
+                onCountrySelected = { country ->
+                    onCountrySelected(country)
+                    showCountryPicker = false
+                },
+                onDismiss = { showCountryPicker = false }
+            )
+        }
     }
 }
 

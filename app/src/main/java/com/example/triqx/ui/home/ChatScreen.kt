@@ -7,6 +7,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -51,6 +52,7 @@ import com.example.triqx.ui.notifications.Conversation
 import com.example.triqx.ui.notifications.NotificationViewModel
 import com.example.triqx.service.email.EmailProvider
 import com.example.triqx.utils.EmailUtils
+import com.example.triqx.ui.theme.Dimens
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -77,6 +79,7 @@ fun ChatScreen(
     var manualReplyText by rememberSaveable(stateSaver = TextFieldValue.Saver) { mutableStateOf(TextFieldValue("")) }
     var showDismissDialog by remember { mutableStateOf(false) }
     var showNotConnectedDialog by remember { mutableStateOf(false) }
+    var showDetailsSheet by remember { mutableStateOf(false) }
     var pendingUnconnectedReplyText by remember { mutableStateOf("") }
 
     val listState = rememberLazyListState()
@@ -105,9 +108,7 @@ fun ChatScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable {
-                                    if (conversation.contact != null) {
-                                        onViewContact("contact_id_${conversation.contact.id}")
-                                    }
+                                    showDetailsSheet = true
                                 }
                         ) {
                             // Avatar
@@ -141,17 +142,6 @@ fun ChatScreen(
                                         modifier = Modifier.weight(1f, fill = false)
                                     )
 
-                                    val senderEmail = EmailUtils.cleanEmail(conversation.senderIdentifier)
-                                    if (!senderEmail.isNullOrBlank() && !senderEmail.equals(conversation.title, ignoreCase = true)) {
-                                        Text(
-                                            text = "($senderEmail)",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                    }
-
                                     if (conversation.contact != null) {
                                         Surface(
                                             shape = RoundedCornerShape(4.dp),
@@ -168,33 +158,45 @@ fun ChatScreen(
                                     }
                                 }
 
-                                val appName = remember(conversation.packageName) {
-                                    when {
-                                        conversation.packageName.contains("whatsapp", ignoreCase = true) -> "WhatsApp"
-                                        conversation.packageName.contains("messaging", ignoreCase = true) || conversation.packageName.contains("mms", ignoreCase = true) -> "Messages"
-                                        conversation.packageName.contains("gm", ignoreCase = true) || conversation.packageName.contains("gmail", ignoreCase = true) -> "Gmail"
-                                        conversation.packageName.contains("outlook", ignoreCase = true) -> "Outlook"
-                                        conversation.packageName.contains("slack", ignoreCase = true) -> "Slack"
-                                        conversation.packageName.contains("telegram", ignoreCase = true) -> "Telegram"
-                                        else -> conversation.packageName.substringAfterLast('.').replaceFirstChar { it.uppercase() }
+                                val senderEmail = EmailUtils.cleanEmail(conversation.senderIdentifier)
+                                val receiverEmail = EmailUtils.cleanEmail(conversation.receiverIdentifier)
+                                val showSender = !senderEmail.isNullOrBlank() && !senderEmail.equals(conversation.title, ignoreCase = true)
+                                val showReceiver = !receiverEmail.isNullOrBlank()
+
+                                if (showSender || showReceiver) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        if (showSender) {
+                                            Text(
+                                                text = senderEmail!!,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                                modifier = Modifier.weight(1f, fill = false)
+                                            )
+                                        }
+                                        if (showSender && showReceiver) {
+                                            Text(
+                                                text = "•",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                                            )
+                                        }
+                                        if (showReceiver) {
+                                            Text(
+                                                text = "to: $receiverEmail",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                                modifier = Modifier.weight(1f, fill = false)
+                                            )
+                                        }
                                     }
                                 }
-
-                                val subject = remember(conversation.messages) {
-                                    conversation.messages.firstOrNull { !it.subText.isNullOrBlank() }?.subText
-                                }
-
-                                val cleanReceiver = EmailUtils.cleanEmail(conversation.receiverIdentifier)
-                                val appWithAccount = if (!cleanReceiver.isNullOrBlank()) "$appName • $cleanReceiver" else appName
-                                val fullSubtitle = if (!subject.isNullOrBlank()) "$appWithAccount • $subject" else appWithAccount
-
-                                Text(
-                                    text = fullSubtitle,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
                             }
                         }
                     } else {
@@ -236,30 +238,57 @@ fun ChatScreen(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(
-                        text = "Conversation no longer active",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    if (groups.isEmpty()) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(36.dp),
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    } else {
+                        Text(
+                            text = "Conversation no longer active",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             } else {
-                // Messages Scroll Area
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth(),
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    items(
-                        items = chronologicalMessages,
-                        key = { "${it.timestamp}_${it.senderName}_${it.bodyText.hashCode()}" }
-                    ) { message ->
-                        GoogleMessageBubble(
-                            message = message,
-                            groupTitle = conversation.title
+                if (chronologicalMessages.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "No messages in this conversation",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
                         )
+                    }
+                } else {
+                    // Messages Scroll Area
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth(),
+                        contentPadding = PaddingValues(
+                            start = Dimens.SpacingStandard,
+                            end = Dimens.SpacingStandard,
+                            top = Dimens.SpacingMedium,
+                            bottom = Dimens.SpacingMedium
+                        ),
+                        verticalArrangement = Arrangement.spacedBy(Dimens.SpacingSmall)
+                    ) {
+                        items(
+                            items = chronologicalMessages,
+                            key = { "${it.timestamp}_${it.senderName}_${it.bodyText.hashCode()}" }
+                        ) { message ->
+                            GoogleMessageBubble(
+                                message = message,
+                                groupTitle = conversation.title
+                            )
+                        }
                     }
                 }
 
@@ -467,6 +496,232 @@ fun ChatScreen(
                                 modifier = Modifier.size(20.dp)
                             )
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    // Conversation Details & AI Settings Bottom Sheet
+    if (showDetailsSheet && conversation != null) {
+        var customPromptInput by remember(conversation.customPrompt) {
+            mutableStateOf(conversation.customPrompt ?: "")
+        }
+        var selectedReplyCount by remember(conversation.replyCount) {
+            mutableIntStateOf(conversation.replyCount ?: 3)
+        }
+
+        ModalBottomSheet(
+            onDismissRequest = { showDetailsSheet = false },
+            shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+            containerColor = MaterialTheme.colorScheme.surface
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp)
+                    .padding(bottom = 36.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                // Top Conversation Info Header
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Surface(
+                        modifier = Modifier.size(48.dp),
+                        shape = RoundedCornerShape(14.dp),
+                        color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                        shadowElevation = 1.dp
+                    ) {
+                        AppIcon(
+                            packageName = conversation.packageName,
+                            appName = conversation.title,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(4.dp)
+                        )
+                    }
+
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text(
+                                text = conversation.title,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            if (conversation.contact != null) {
+                                Surface(
+                                    shape = RoundedCornerShape(4.dp),
+                                    color = MaterialTheme.colorScheme.primaryContainer
+                                ) {
+                                    Text(
+                                        text = "VIP",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                                    )
+                                }
+                            }
+                        }
+
+                        val cleanSender = EmailUtils.cleanEmail(conversation.senderIdentifier)
+                        val cleanReceiver = EmailUtils.cleanEmail(conversation.receiverIdentifier)
+                        val showSender = !cleanSender.isNullOrBlank() && !cleanSender.equals(conversation.title, ignoreCase = true)
+                        val showReceiver = !cleanReceiver.isNullOrBlank()
+
+                        if (showSender || showReceiver) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                if (showSender) {
+                                    Text(
+                                        text = cleanSender!!,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f, fill = false)
+                                    )
+                                }
+                                if (showSender && showReceiver) {
+                                    Text(
+                                        text = "•",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                                    )
+                                }
+                                if (showReceiver) {
+                                    Text(
+                                        text = "to: $cleanReceiver",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f, fill = false)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (conversation.contact != null) {
+                    OutlinedButton(
+                        onClick = {
+                            showDetailsSheet = false
+                            onViewContact("contact_id_${conversation.contact.id}")
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(Icons.Default.Contacts, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("View Contact")
+                    }
+                }
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
+                // Number of Replies Selector (1 to 5)
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "Replies",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.SemiBold
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        (1..5).forEach { count ->
+                            FilterChip(
+                                selected = selectedReplyCount == count,
+                                onClick = { selectedReplyCount = count },
+                                label = {
+                                    Text(
+                                        text = "$count",
+                                        fontWeight = if (selectedReplyCount == count) FontWeight.Bold else FontWeight.Normal,
+                                        modifier = Modifier.fillMaxWidth(),
+                                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                    )
+                                },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+                }
+
+                // Prompt Field
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        text = "Prompt",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    OutlinedTextField(
+                        value = customPromptInput,
+                        onValueChange = { customPromptInput = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = Dimens.InputShape,
+                        placeholder = { Text("Add instructions for this chat...") },
+                        minLines = 2,
+                        maxLines = 4
+                    )
+                }
+
+                // Actions (Save, Reset)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    if (!conversation.customPrompt.isNullOrBlank() || conversation.replyCount != null) {
+                        OutlinedButton(
+                            onClick = {
+                                viewModel.updateConversationAiSettings(
+                                    groupKey = conversation.groupKey,
+                                    customPrompt = null,
+                                    replyCount = null,
+                                    packageName = conversation.packageName,
+                                    title = conversation.title
+                                )
+                                showDetailsSheet = false
+                                Toast.makeText(context, "Reset to defaults", Toast.LENGTH_SHORT).show()
+                            },
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("Reset", color = MaterialTheme.colorScheme.error)
+                        }
+                    }
+
+                    Button(
+                        onClick = {
+                            val cleanPrompt = customPromptInput.trim().ifBlank { null }
+                            viewModel.updateConversationAiSettings(
+                                groupKey = conversation.groupKey,
+                                customPrompt = cleanPrompt,
+                                replyCount = selectedReplyCount,
+                                packageName = conversation.packageName,
+                                title = conversation.title
+                            )
+                            showDetailsSheet = false
+                            Toast.makeText(context, "Settings saved", Toast.LENGTH_SHORT).show()
+                        },
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Save", fontWeight = FontWeight.Bold)
                     }
                 }
             }

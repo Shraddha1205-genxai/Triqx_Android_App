@@ -16,6 +16,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.example.triqx.ui.theme.Dimens
 
 /**
  * Standardized Google Drive / M3 style search bar used across all screens in Triqx.
@@ -26,14 +27,20 @@ fun TriqxSearchBar(
     onQueryChange: (String) -> Unit,
     placeholder: String,
     modifier: Modifier = Modifier,
+    contentPadding: PaddingValues = PaddingValues(
+        start = Dimens.SpacingStandard,
+        end = Dimens.SpacingStandard,
+        top = Dimens.SpacingMicro,
+        bottom = Dimens.SpacingNano
+    ),
     onNavigateBack: (() -> Unit)? = null,
     trailingContent: (@Composable () -> Unit)? = null
 ) {
     Surface(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 6.dp)
-            .height(54.dp),
+            .padding(contentPadding)
+            .height(Dimens.SearchBarHeight),
         shape = CircleShape,
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
         tonalElevation = 2.dp
@@ -41,7 +48,7 @@ fun TriqxSearchBar(
         Row(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 14.dp),
+                .padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {

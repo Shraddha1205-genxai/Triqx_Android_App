@@ -102,14 +102,20 @@ fun PriorityContactsScreen(
         containerColor = MaterialTheme.colorScheme.background,
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         floatingActionButton = {
-            FloatingActionButton(
-                onClick = { showAddChoiceSheet = true },
-                shape = Dimens.CardShape,
-                containerColor = MaterialTheme.colorScheme.primaryContainer,
-                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                elevation = FloatingActionButtonDefaults.elevation(defaultElevation = 4.dp)
+            Box(
+                modifier = Modifier
+                    .navigationBarsPadding()
+                    .padding(bottom = 80.dp)
             ) {
-                Icon(Icons.Default.Add, contentDescription = "Add Contact", modifier = Modifier.size(26.dp))
+                FloatingActionButton(
+                    onClick = { showAddChoiceSheet = true },
+                    shape = Dimens.CardShape,
+                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                    elevation = FloatingActionButtonDefaults.elevation(defaultElevation = 4.dp)
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = "Add Contact", modifier = Modifier.size(26.dp))
+                }
             }
         }
     ) { innerPadding ->
@@ -118,6 +124,7 @@ fun PriorityContactsScreen(
                 .fillMaxSize()
                 .padding(top = innerPadding.calculateTopPadding())
                 .statusBarsPadding()
+                .padding(top = Dimens.ScreenTopPadding)
         ) {
             // Google Floating Search Bar Pill
             TriqxSearchBar(
@@ -144,34 +151,17 @@ fun PriorityContactsScreen(
                 }
             )
 
-            // Subheader
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = Dimens.SpacingStandard, end = Dimens.SpacingStandard, top = Dimens.SpacingSmall, bottom = Dimens.SpacingMicro),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text(
-                    text = "VIP Contacts",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                if (filteredContacts.isNotEmpty()) {
-                    Text(
-                        text = "${filteredContacts.size} total",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
+            Spacer(modifier = Modifier.height(Dimens.SpacingSmall))
 
             if (contacts.isEmpty()) {
                 Box(
                     modifier = Modifier
-                        .fillMaxSize()
-                        .padding(24.dp),
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .navigationBarsPadding()
+                        .padding(bottom = 80.dp)
+                        .offset(y = (-16).dp)
+                        .padding(horizontal = 24.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Column(
@@ -196,13 +186,13 @@ fun PriorityContactsScreen(
                         Spacer(modifier = Modifier.height(Dimens.SpacingStandard))
 
                         Text(
-                            text = "No Priority Contacts",
+                            text = "No Contacts",
                             style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.Bold
                         )
                         Spacer(modifier = Modifier.height(Dimens.SpacingSmall))
                         Text(
-                            text = "Add contacts whose messages you want prioritized with AI quick replies.",
+                            text = "Add contacts you want prioritized.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(horizontal = Dimens.SpacingStandard),
@@ -222,7 +212,13 @@ fun PriorityContactsScreen(
                 }
             } else if (filteredContacts.isEmpty()) {
                 Box(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .navigationBarsPadding()
+                        .padding(bottom = 80.dp)
+                        .offset(y = (-16).dp)
+                        .padding(horizontal = 24.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
@@ -234,8 +230,7 @@ fun PriorityContactsScreen(
             } else {
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 80.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                    contentPadding = PaddingValues(top = Dimens.SpacingNano, bottom = 140.dp)
                 ) {
                     items(filteredContacts, key = { it.id }) { contact ->
                         GoogleContactCard(
@@ -431,18 +426,15 @@ fun GoogleContactCard(
         PixelAvatarColors.getColorsForName(contact.displayName)
     }
 
-    Surface(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick),
-        shape = Dimens.CardShape,
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
-        tonalElevation = 1.dp
+            .clickable(onClick = onClick)
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(Dimens.SpacingStandard),
+                .padding(horizontal = Dimens.SpacingStandard, vertical = Dimens.SpacingSemiMedium),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(Dimens.SpacingMedium)
         ) {
@@ -520,6 +512,11 @@ fun GoogleContactCard(
                 }
             }
         }
+        HorizontalDivider(
+            modifier = Modifier.padding(start = 74.dp, end = Dimens.SpacingStandard),
+            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f),
+            thickness = 0.5.dp
+        )
     }
 }
 

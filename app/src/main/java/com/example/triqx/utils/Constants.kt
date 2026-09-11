@@ -30,4 +30,14 @@ object Constants {
         "profile",
         "email"
     )
+
+    // Backend Base URL
+    var DEFAULT_BACKEND_BASE_URL = "https://triqx-backend.onrender.com/api"
+
+    // Backward-compatible route aliases
+    val AI_GENERATE_REPLIES_PATH: String
+        get() = com.example.triqx.data.api.ApiRoutes.Ai.GENERATE_REPLIES
+
+    val AUTH_BASE_URL: String
+        get() = com.example.triqx.data.api.ApiRoutes.url("/auth", DEFAULT_BACKEND_BASE_URL)
 }

@@ -84,8 +84,8 @@ fun ContactDetailsScreen(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(top = innerPadding.calculateTopPadding())
-                    .padding(16.dp)
+                    .padding(top = innerPadding.calculateTopPadding() + Dimens.ScreenTopPadding)
+                    .padding(horizontal = Dimens.SpacingStandard)
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally

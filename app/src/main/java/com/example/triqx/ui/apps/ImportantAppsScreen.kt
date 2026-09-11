@@ -10,12 +10,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Apps
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Clear
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -24,12 +19,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.triqx.ui.components.AppIcon
 import com.example.triqx.ui.components.TriqxSearchBar
 import com.example.triqx.ui.theme.Dimens
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun ImportantAppsScreen(
     viewModel: AppViewModel,
@@ -38,6 +34,7 @@ fun ImportantAppsScreen(
 ) {
     val apps by viewModel.savedImportantApps.collectAsState()
     var searchQuery by remember { mutableStateOf("") }
+    var editingPromptApp by remember { mutableStateOf<AppInfo?>(null) }
 
     val filteredApps = remember(apps, searchQuery) {
         val list = if (searchQuery.isBlank()) {
@@ -55,14 +52,20 @@ fun ImportantAppsScreen(
         containerColor = MaterialTheme.colorScheme.background,
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         floatingActionButton = {
-            FloatingActionButton(
-                onClick = onNavigateToSelection,
-                shape = Dimens.CardShape,
-                containerColor = MaterialTheme.colorScheme.primaryContainer,
-                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                elevation = FloatingActionButtonDefaults.elevation(defaultElevation = 4.dp)
+            Box(
+                modifier = Modifier
+                    .navigationBarsPadding()
+                    .padding(bottom = 80.dp)
             ) {
-                Icon(Icons.Default.Add, contentDescription = "Add Important App", modifier = Modifier.size(26.dp))
+                FloatingActionButton(
+                    onClick = onNavigateToSelection,
+                    shape = Dimens.CardShape,
+                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                    elevation = FloatingActionButtonDefaults.elevation(defaultElevation = 4.dp)
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = "Add Important App", modifier = Modifier.size(26.dp))
+                }
             }
         }
     ) { innerPadding ->
@@ -71,6 +74,7 @@ fun ImportantAppsScreen(
                 .fillMaxSize()
                 .padding(top = innerPadding.calculateTopPadding())
                 .statusBarsPadding()
+                .padding(top = Dimens.ScreenTopPadding)
         ) {
             // Google Floating Search Bar Pill
             TriqxSearchBar(
@@ -97,34 +101,17 @@ fun ImportantAppsScreen(
                 }
             )
 
-            // Subheader
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = Dimens.SpacingStandard, end = Dimens.SpacingStandard, top = Dimens.SpacingSmall, bottom = Dimens.SpacingMicro),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text(
-                    text = "Tracked Apps",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                if (filteredApps.isNotEmpty()) {
-                    Text(
-                        text = "${filteredApps.size} apps",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
+            Spacer(modifier = Modifier.height(Dimens.SpacingSmall))
 
             if (apps.isEmpty()) {
                 Box(
                     modifier = Modifier
-                        .fillMaxSize()
-                        .padding(24.dp),
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .navigationBarsPadding()
+                        .padding(bottom = 80.dp)
+                        .offset(y = (-16).dp)
+                        .padding(horizontal = 24.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Column(
@@ -149,13 +136,13 @@ fun ImportantAppsScreen(
                         Spacer(modifier = Modifier.height(Dimens.SpacingStandard))
 
                         Text(
-                            text = "No Important Apps Added",
+                            text = "No Apps Added",
                             style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.Bold
                         )
                         Spacer(modifier = Modifier.height(Dimens.SpacingSmall))
                         Text(
-                            text = "Add WhatsApp, Gmail, Slack or other apps to prioritize notifications.",
+                            text = "Add apps to prioritize notifications.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(horizontal = Dimens.SpacingStandard),
@@ -175,7 +162,13 @@ fun ImportantAppsScreen(
                 }
             } else if (filteredApps.isEmpty()) {
                 Box(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .navigationBarsPadding()
+                        .padding(bottom = 80.dp)
+                        .offset(y = (-16).dp)
+                        .padding(horizontal = 24.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
@@ -187,13 +180,15 @@ fun ImportantAppsScreen(
             } else {
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 80.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                    contentPadding = PaddingValues(top = Dimens.SpacingNano, bottom = 140.dp)
                 ) {
                     items(filteredApps, key = { it.packageName }) { app ->
                         GoogleAppCard(
                             appName = app.appName,
                             packageName = app.packageName,
+                            prompt = app.prompt,
+                            replyStyle = app.replyStyle,
+                            onEditPrompt = { editingPromptApp = app },
                             onDelete = { viewModel.toggleImportant(app) }
                         )
                     }
@@ -201,24 +196,172 @@ fun ImportantAppsScreen(
             }
         }
     }
+
+    // App AI Reply Configuration Dialog
+    if (editingPromptApp != null) {
+        val targetApp = editingPromptApp!!
+        val presetStyles = remember { listOf("Concise", "Professional", "Friendly", "Casual", "Detailed") }
+        var promptText by remember(targetApp) { mutableStateOf(targetApp.prompt ?: "") }
+        var isCustomStyle by remember(targetApp) {
+            mutableStateOf(
+                targetApp.replyStyle != null &&
+                !presetStyles.any { it.equals(targetApp.replyStyle, ignoreCase = true) }
+            )
+        }
+        var selectedStyle by remember(targetApp) {
+            val initial = targetApp.replyStyle ?: "Concise"
+            mutableStateOf(if (presetStyles.any { it.equals(initial, ignoreCase = true) }) initial else "Concise")
+        }
+        var customStyleText by remember(targetApp) {
+            mutableStateOf(
+                if (targetApp.replyStyle != null && !presetStyles.any { it.equals(targetApp.replyStyle, ignoreCase = true) }) {
+                    targetApp.replyStyle ?: ""
+                } else ""
+            )
+        }
+
+        AlertDialog(
+            onDismissRequest = { editingPromptApp = null },
+            shape = Dimens.DialogShape,
+            title = {
+                Text(
+                    text = "AI Reply Configuration",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(Dimens.SpacingMedium),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = "Customize AI replies generated for notifications from ${targetApp.appName}.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    // Reply Style Section
+                    Text(
+                        text = "Reply Style",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        presetStyles.forEach { style ->
+                            FilterChip(
+                                selected = !isCustomStyle && selectedStyle.equals(style, ignoreCase = true),
+                                onClick = {
+                                    selectedStyle = style
+                                    isCustomStyle = false
+                                },
+                                label = { Text(style, style = MaterialTheme.typography.bodySmall) }
+                            )
+                        }
+
+                        FilterChip(
+                            selected = isCustomStyle,
+                            onClick = { isCustomStyle = true },
+                            leadingIcon = {
+                                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(14.dp))
+                            },
+                            label = { Text("Custom", style = MaterialTheme.typography.bodySmall) }
+                        )
+                    }
+
+                    if (isCustomStyle) {
+                        OutlinedTextField(
+                            value = customStyleText,
+                            onValueChange = { customStyleText = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = Dimens.InputShape,
+                            label = { Text("Custom Reply Style") },
+                            placeholder = { Text("e.g. Humorous, Sarcastic, Formal") },
+                            singleLine = true
+                        )
+                    }
+
+                    // Prompt Section
+                    Text(
+                        text = "App Prompt",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+
+                    OutlinedTextField(
+                        value = promptText,
+                        onValueChange = { promptText = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = Dimens.InputShape,
+                        label = { Text("Prompt for ${targetApp.appName}") },
+                        placeholder = { Text("e.g. Keep replies under 5 words, friendly tone") },
+                        minLines = 3,
+                        maxLines = 5
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val finalStyle = if (isCustomStyle) {
+                            customStyleText.trim().ifBlank { "Concise" }
+                        } else {
+                            selectedStyle
+                        }
+                        viewModel.updateAppConfig(targetApp.packageName, promptText, finalStyle)
+                        editingPromptApp = null
+                    },
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Text("Save", fontWeight = FontWeight.SemiBold)
+                }
+            },
+            dismissButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(Dimens.SpacingSmall)) {
+                    if (!targetApp.prompt.isNullOrBlank()) {
+                        TextButton(
+                            onClick = {
+                                viewModel.updateAppConfig(targetApp.packageName, null, targetApp.replyStyle ?: "Concise")
+                                editingPromptApp = null
+                            }
+                        ) {
+                            Text("Clear Prompt", color = MaterialTheme.colorScheme.error)
+                        }
+                    }
+                    TextButton(onClick = { editingPromptApp = null }) {
+                        Text("Cancel")
+                    }
+                }
+            }
+        )
+    }
 }
 
 @Composable
 fun GoogleAppCard(
     appName: String,
     packageName: String,
+    prompt: String? = null,
+    replyStyle: String? = "Concise",
+    onEditPrompt: () -> Unit,
     onDelete: () -> Unit
 ) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = Dimens.CardShape,
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
-        tonalElevation = 1.dp
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onEditPrompt)
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(Dimens.SpacingStandard),
+                .padding(horizontal = Dimens.SpacingStandard, vertical = Dimens.SpacingSemiMedium),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(Dimens.SpacingMedium)
         ) {
@@ -248,6 +391,75 @@ fun GoogleAppCard(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+
+                Spacer(modifier = Modifier.height(4.dp))
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Reply Style Chip
+                    Surface(
+                        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.7f),
+                        shape = RoundedCornerShape(6.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.Tune,
+                                contentDescription = null,
+                                modifier = Modifier.size(11.dp),
+                                tint = MaterialTheme.colorScheme.onSecondaryContainer
+                            )
+                            Text(
+                                text = replyStyle ?: "Concise",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    }
+
+                    // Prompt Chip
+                    if (!prompt.isNullOrBlank()) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f),
+                            shape = RoundedCornerShape(6.dp),
+                            modifier = Modifier.weight(1f, fill = false)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.SmartToy,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(12.dp),
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                                Text(
+                                    text = prompt,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            IconButton(onClick = onEditPrompt, modifier = Modifier.size(36.dp)) {
+                Icon(
+                    imageVector = Icons.Default.Tune,
+                    contentDescription = "Configure AI Reply",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp)
+                )
             }
 
             IconButton(onClick = onDelete, modifier = Modifier.size(36.dp)) {
@@ -259,6 +471,11 @@ fun GoogleAppCard(
                 )
             }
         }
+        HorizontalDivider(
+            modifier = Modifier.padding(start = 74.dp, end = Dimens.SpacingStandard),
+            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f),
+            thickness = 0.5.dp
+        )
     }
 }
 
@@ -359,7 +576,10 @@ fun AppSelectionScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(top = innerPadding.calculateTopPadding(), bottom = innerPadding.calculateBottomPadding())
+                .padding(
+                    top = innerPadding.calculateTopPadding() + Dimens.ScreenTopPadding,
+                    bottom = innerPadding.calculateBottomPadding()
+                )
         ) {
             // Search Bar Pill
             TriqxSearchBar(
@@ -378,12 +598,11 @@ fun AppSelectionScreen(
             } else {
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                    contentPadding = PaddingValues(top = Dimens.SpacingNano, bottom = 80.dp)
                 ) {
                     items(filteredApps, key = { it.packageName }) { app ->
                         val isSelected = selectedPackages.contains(app.packageName)
-                        Surface(
+                        Column(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable {
@@ -392,16 +611,18 @@ fun AppSelectionScreen(
                                     } else {
                                         selectedPackages.add(app.packageName)
                                     }
-                                },
-                            shape = Dimens.SquircleShape,
-                            color = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f) else MaterialTheme.colorScheme.surfaceContainerLow
+                                }
+                                .background(
+                                    if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f)
+                                    else Color.Transparent
+                                )
                         ) {
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(12.dp),
+                                    .padding(horizontal = Dimens.SpacingStandard, vertical = Dimens.SpacingSemiMedium),
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                horizontalArrangement = Arrangement.spacedBy(Dimens.SpacingMedium)
                             ) {
                                 Surface(
                                     modifier = Modifier.size(42.dp),
@@ -442,6 +663,11 @@ fun AppSelectionScreen(
                                     }
                                 )
                             }
+                            HorizontalDivider(
+                                modifier = Modifier.padding(start = 70.dp, end = Dimens.SpacingStandard),
+                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f),
+                                thickness = 0.5.dp
+                            )
                         }
                     }
                 }

@@ -1,0 +1,817 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Triqx — Executive & Technical Project Write-Up</title>
+<style>
+  @page {
+    size: A4;
+    margin: 12mm 14mm 12mm 14mm;
+  }
+  
+  * {
+    box-sizing: border-box;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    color: #1e293b;
+    line-height: 1.48;
+    font-size: 9.3pt;
+    margin: 0;
+    padding: 0;
+    background-color: #ffffff;
+  }
+
+  .page-break-before {
+    page-break-before: always;
+    break-before: page;
+  }
+
+  /* Header Banner */
+  .header-banner {
+    background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 55%, #2563eb 100%);
+    color: #ffffff;
+    border-radius: 10px;
+    padding: 18px 22px;
+    margin-bottom: 12px;
+  }
+
+  .badge {
+    display: inline-block;
+    padding: 2.5px 8px;
+    font-size: 7.2pt;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.2);
+    color: #ffffff;
+    margin-bottom: 5px;
+  }
+
+  .header-title {
+    font-size: 20pt;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+    margin: 0 0 4px 0;
+    line-height: 1.15;
+  }
+
+  .header-subtitle {
+    font-size: 10.5pt;
+    font-weight: 400;
+    color: #cbd5e1;
+    margin: 0 0 10px 0;
+    line-height: 1.35;
+  }
+
+  .meta-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(255, 255, 255, 0.18);
+    font-size: 7.5pt;
+  }
+
+  .meta-item strong {
+    display: block;
+    color: #93c5fd;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-size: 6.6pt;
+    margin-bottom: 2px;
+  }
+
+  /* Running Header/Footer */
+  .doc-running-header {
+    font-size: 7.2pt;
+    color: #94a3b8;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    display: flex;
+    justify-content: space-between;
+    border-bottom: 1px solid #e2e8f0;
+    padding-bottom: 4px;
+    margin-bottom: 10px;
+  }
+
+  .doc-running-footer {
+    font-size: 7.2pt;
+    color: #94a3b8;
+    display: flex;
+    justify-content: space-between;
+    border-top: 1px solid #e2e8f0;
+    padding-top: 5px;
+    margin-top: 12px;
+  }
+
+  /* Section Styling */
+  h2 {
+    font-size: 12pt;
+    font-weight: 700;
+    color: #0f172a;
+    border-bottom: 1.8px solid #e2e8f0;
+    padding-bottom: 3px;
+    margin-top: 12px;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    page-break-after: avoid;
+    break-after: avoid;
+  }
+
+  h2 .section-num {
+    background: #2563eb;
+    color: #ffffff;
+    font-size: 7.2pt;
+    font-weight: 700;
+    padding: 2px 5px;
+    border-radius: 4px;
+    margin-right: 6px;
+  }
+
+  h3 {
+    font-size: 9.8pt;
+    font-weight: 600;
+    color: #1e3a8a;
+    margin-top: 10px;
+    margin-bottom: 4px;
+    page-break-after: avoid;
+    break-after: avoid;
+  }
+
+  p {
+    margin-top: 0;
+    margin-bottom: 7px;
+    text-align: justify;
+  }
+
+  /* Cards & Containers */
+  .card {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 7px;
+    padding: 9px 11px;
+    margin-bottom: 7px;
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+
+  .card-title {
+    font-weight: 700;
+    color: #0f172a;
+    font-size: 8.9pt;
+    margin-bottom: 3px;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+
+  .grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+
+  .grid-3 {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+
+  /* Callout Box */
+  .callout {
+    background: #eff6ff;
+    border-left: 3.5px solid #2563eb;
+    border-radius: 0 6px 6px 0;
+    padding: 8px 12px;
+    margin: 8px 0;
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+
+  .callout strong {
+    color: #1e3a8a;
+  }
+
+  /* Tables */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 8pt;
+    margin: 5px 0;
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+
+  th {
+    background: #0f172a;
+    color: #ffffff;
+    font-weight: 600;
+    text-align: left;
+    padding: 4px 7px;
+    font-size: 7.4pt;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+  }
+
+  td {
+    padding: 3.5px 7px;
+    border-bottom: 1px solid #e2e8f0;
+    vertical-align: top;
+  }
+
+  tr:nth-child(even) td {
+    background: #f8fafc;
+  }
+
+  /* Pills & Tags */
+  .pill {
+    display: inline-block;
+    padding: 1.5px 5px;
+    border-radius: 4px;
+    font-size: 7pt;
+    font-weight: 600;
+  }
+  .pill-blue { background: #dbeafe; color: #1d4ed8; }
+  .pill-green { background: #dcfce7; color: #15803d; }
+  .pill-purple { background: #f3e8ff; color: #7e22ce; }
+  .pill-amber { background: #fef3c7; color: #b45309; }
+
+  /* Flow Steps */
+  .flow-step {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin-bottom: 7px;
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+
+  .flow-number {
+    background: #2563eb;
+    color: #ffffff;
+    font-size: 7.2pt;
+    font-weight: bold;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+
+  .flow-content {
+    flex: 1;
+  }
+
+  .flow-content strong {
+    color: #0f172a;
+    display: block;
+    margin-bottom: 1px;
+    font-size: 8.8pt;
+  }
+
+  ul {
+    margin: 2px 0 5px 15px;
+    padding: 0;
+  }
+
+  li {
+    margin-bottom: 2px;
+  }
+</style>
+</head>
+<body>
+
+<!-- ==================== PAGE 1 ==================== -->
+<div class="header-banner">
+  <span class="badge">Executive Brief & Technical Architecture</span>
+  <h1 class="header-title">TRIQX — AI Communication Assistant</h1>
+  <div class="header-subtitle">Intelligent Smart Notification Hub & Headless Multi-Platform Response Engine</div>
+  
+  <div class="meta-grid">
+    <div class="meta-item">
+      <strong>Target Audience</strong>
+      Executive & Engineering Leadership
+    </div>
+    <div class="meta-item">
+      <strong>Platform & Baseline</strong>
+      Android 10+ (SDK 29–37) • MVVM Clean
+    </div>
+    <div class="meta-item">
+      <strong>Core Technologies</strong>
+      Kotlin, Jetpack Compose, Room, Hilt, AI
+    </div>
+    <div class="meta-item">
+      <strong>Project Status</strong>
+      Feature-Complete / Active API Integration
+    </div>
+  </div>
+</div>
+
+<h2><span class="section-num">01</span> Executive Summary</h2>
+<p>
+  <strong>Triqx</strong> is an intelligent Android AI communication assistant engineered to solve <strong>notification fatigue, fragmented app switching, and communication latency</strong>. In modern professional workflows, users receive hundreds of incoming notifications daily across disjointed applications—WhatsApp, Microsoft Teams, Slack, Telegram, Gmail, and Outlook. Filtering urgent messages, switching apps to reply, and manually drafting responses consumes hours of cognitive focus each week.
+</p>
+<p>
+  Triqx bridges Android's native notification architecture with cloud and on-device AI intelligence to create a unified, centralized communications layer:
+</p>
+<div class="grid-3">
+  <div class="card">
+    <div class="card-title">🎯 Intelligent VIP Filtering</div>
+    Filters out background noise, surfacing exclusively messages originating from whitelisted <strong>Important Apps</strong> or user-defined <strong>Priority Contacts (VIPs)</strong>.
+  </div>
+  <div class="card">
+    <div class="card-title">⚡ Zero-Latency AI Replies</div>
+    Analyzes multi-turn conversation threads in real time to generate 1 to 5 context-aware reply suggestions instantly as messages arrive.
+  </div>
+  <div class="card">
+    <div class="card-title">🚀 1-Stage Headless Dispatch</div>
+    Enables users to send replies directly from the <strong>Android Notification Shade</strong> or in-app hub—<strong>without ever opening the native messaging apps</strong>.
+  </div>
+</div>
+
+<h2><span class="section-num">02</span> Business Value & Problem-Solution Matrix</h2>
+<table>
+  <thead>
+    <tr>
+      <th style="width: 25%;">Industry Problem</th>
+      <th style="width: 42%;">How Triqx Solves It</th>
+      <th style="width: 33%;">Measurable Business Impact</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Notification Overload & Fatigue</strong><br><span style="color:#64748b; font-size:7.4pt;">Critical stakeholder pings are buried beneath group chat noise and promotional alerts.</span></td>
+      <td><strong>Rule-Based Dual Whitelisting:</strong> Ignores non-whitelisted traffic. Only authorized applications and VIP contacts trigger notification indexing and AI processing.</td>
+      <td><strong>Zero Missed VIP Alerts:</strong> Eliminates distraction while providing 100% visibility for critical communications.</td>
+    </tr>
+    <tr>
+      <td><strong>Context-Switching Drag</strong><br><span style="color:#64748b; font-size:7.4pt;">Replying requires opening WhatsApp, then Slack, then Outlook—costing 15–30s per interaction.</span></td>
+      <td><strong>Universal Headless Dispatch:</strong> Injects responses directly into Android <code>RemoteInput</code> slots or dispatches via official Cloud REST APIs in the background.</td>
+      <td><strong>30–45 Mins Saved Daily:</strong> Removes application launching, splash screens, and navigation overhead entirely.</td>
+    </tr>
+    <tr>
+      <td><strong>Repetitive Drafting Overhead</strong><br><span style="color:#64748b; font-size:7.4pt;">Routine acknowledgments, confirmations, and scheduling queries are typed manually.</span></td>
+      <td><strong>Contextual Smart Reply Engine:</strong> Considers previous chat history, contact identity, and subject headers to produce polished, 1-tap responses.</td>
+      <td><strong>Near-Instant Response Times:</strong> Users can acknowledge, confirm, or defer communications with a single tap.</td>
+    </tr>
+    <tr>
+      <td><strong>Generic "Robot" Responses</strong><br><span style="color:#64748b; font-size:7.4pt;">Generic OS-level canned replies ("OK", "Thanks") sound robotic and lack contextual nuance.</span></td>
+      <td><strong>3-Tier Multi-Layer Prompt Engine:</strong> Merges Global Persona directives, App-Specific Tones (e.g., Slack = Professional), and Conversation Overrides (e.g., Client = Formal).</td>
+      <td><strong>Authentic, Professional Tone:</strong> Replies match exact personal tone, professional etiquette, and language requirements.</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="doc-running-footer">
+  <span>TRIQX — Intelligent AI Communication Assistant</span>
+  <span>Section 1 & 2 • Executive Overview</span>
+  <span>Page 1 of 5</span>
+</div>
+
+<!-- ==================== PAGE 2 ==================== -->
+<div class="page-break-before"></div>
+<div class="doc-running-header">
+  <span>TRIQX — Project Write-Up</span>
+  <span>Section 3 • Core Product Capabilities</span>
+</div>
+
+<h2><span class="section-num">03</span> Core Product Capabilities ("What It Does")</h2>
+<p>
+  Triqx bridges multiple messaging silos into a single, unified workflow. Rather than requiring the user to switch apps, Triqx acts as an ambient intelligent agent on the device.
+</p>
+
+<div class="grid-2">
+  <div class="card">
+    <div class="card-title"><span class="pill pill-blue">Ingestion</span> Multi-App Notification Parsing</div>
+    Listens to system broadcasts and deconstructs incoming notifications across <strong>WhatsApp, WhatsApp Business, Teams, Slack, Telegram, Gmail, and Outlook</strong> into normalized conversation threads, isolating individual senders, email subjects, and thread context while eliminating synthetic noise.
+  </div>
+  <div class="card">
+    <div class="card-title"><span class="pill pill-green">Action</span> Notification Drawer Assistant</div>
+    Injects an interactive assistant card into Android's notification shade featuring a concise 2-line preview of incoming messages, AI suggested bullets, and <strong><code>1️⃣ Send #1</code>, <code>2️⃣ Send #2</code>, <code>3️⃣ Send #3</code> action buttons</strong> alongside an inline <strong><code>✏️ Edit</code> RemoteInput</strong> field.
+  </div>
+  <div class="card">
+    <div class="card-title"><span class="pill pill-purple">Cloud Email</span> Polymorphic Gmail & Outlook API</div>
+    Employs official OAuth 2.0 (AppAuth) for Google and Microsoft Entra ID. Intelligently routes email replies through the Gmail REST API (RFC 2822 base64 MIME) or Microsoft Graph API (<code>/v1.0/me/sendMail</code>) based on the receiving account.
+  </div>
+  <div class="card">
+    <div class="card-title"><span class="pill pill-amber">Intelligence</span> 3-Tier Multi-Layer Prompt Merging</div>
+    Allows granular persona management across three cascading layers: Global Settings (overall brevity/style), App Level (platform tone, e.g., Slack = Professional), and Conversation Level (individual contact language or specific rules).
+  </div>
+</div>
+
+<div class="grid-2">
+  <div class="card">
+    <div class="card-title"><span class="pill pill-blue">Hub</span> Unified Chat & Conversation Feed</div>
+    Provides a centralized Google Messages / WhatsApp-style inbox where users can browse active threads across all apps, review full conversation history, inspect sender/receiver identifiers, and fine-tune per-thread AI reply counts (1–5) and prompts.
+  </div>
+  <div class="card">
+    <div class="card-title"><span class="pill pill-green">Auth</span> Secure Mobile Phone OTP Flow</div>
+    Includes a complete, production-ready onboarding experience featuring an international country code picker with search, SMS OTP verification, silent token refresh, and encrypted user profile management.
+  </div>
+</div>
+
+<div class="callout">
+  <strong>Key User Benefit:</strong> The user never needs to leave their active screen (e.g., reviewing a spreadsheet, reading documentation, or in a meeting) to read, review AI suggestions, or dispatch an authentic reply to a VIP client or colleague on WhatsApp, Slack, or Email.
+</div>
+
+<h3>Granular VIP Contacts & Important Apps Management</h3>
+<p>
+  Users maintain total authority over what reaches their priority feed:
+</p>
+<ul>
+  <li><strong>Priority Contacts (VIPs):</strong> Import directly from the Android address book with contact lookup key linking, or create manually with custom aliases, multiple phone numbers, and multiple email addresses.</li>
+  <li><strong>Important Apps:</strong> Select specific applications from all installed packages on the device. Each app can have its own dedicated reply style (e.g. Concise, Professional, Casual, Friendly) and custom instructions.</li>
+  <li><strong>Strict Privacy Guard:</strong> Notifications that match neither an important app nor a priority contact are completely ignored—never indexed, never saved, and never transmitted over the network.</li>
+</ul>
+
+<div class="doc-running-footer">
+  <span>TRIQX — Intelligent AI Communication Assistant</span>
+  <span>Section 3 • Capabilities</span>
+  <span>Page 2 of 5</span>
+</div>
+
+<!-- ==================== PAGE 3 ==================== -->
+<div class="page-break-before"></div>
+<div class="doc-running-header">
+  <span>TRIQX — Technical Architecture</span>
+  <span>Section 4 • End-to-End Pipeline</span>
+</div>
+
+<h2><span class="section-num">04</span> Technical Architecture & Deep-Dive ("How It Does It")</h2>
+<p>
+  Triqx is architected around <strong>Clean Architecture</strong>, <strong>MVVM (Model-View-ViewModel)</strong>, and <strong>Unidirectional Data Flow (UDF)</strong>. The system completely decouples notification capture, storage, AI orchestration, and dispatch into resilient, testable modules.
+</p>
+
+<!-- Vector SVG Flowchart -->
+<div style="margin: 6px 0 10px 0;">
+<svg viewBox="0 0 760 380" width="100%" xmlns="http://www.w3.org/2000/svg" style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; display: block;">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0b1329"/>
+      <stop offset="100%" stop-color="#111c38"/>
+    </linearGradient>
+    <linearGradient id="blueCard" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#1e293b"/>
+      <stop offset="100%" stop-color="#0f172a"/>
+    </linearGradient>
+    <filter id="cardShadow" x="-5%" y="-5%" width="110%" height="115%">
+      <feDropShadow dx="0" dy="2" stdDeviation="2.5" flood-color="#000" flood-opacity="0.35"/>
+    </filter>
+    <marker id="arrow" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+      <path d="M 0 1 L 8 5 L 0 9 z" fill="#38bdf8"/>
+    </marker>
+    <marker id="arrowGreen" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+      <path d="M 0 1 L 8 5 L 0 9 z" fill="#4ade80"/>
+    </marker>
+    <marker id="arrowAmber" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+      <path d="M 0 1 L 8 5 L 0 9 z" fill="#fbbf24"/>
+    </marker>
+    <marker id="arrowRose" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+      <path d="M 0 1 L 8 5 L 0 9 z" fill="#f43f5e"/>
+    </marker>
+    <marker id="arrowPurple" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+      <path d="M 0 1 L 8 5 L 0 9 z" fill="#c084fc"/>
+    </marker>
+  </defs>
+
+  <!-- Canvas Background -->
+  <rect width="760" height="380" rx="9" fill="url(#bgGrad)" stroke="#1e293b" stroke-width="1.2"/>
+
+  <!-- Subsystem Boundary Labels -->
+  <rect x="16" y="12" width="728" height="90" rx="7" fill="#1e293b" fill-opacity="0.3" stroke="#334155" stroke-dasharray="3,3"/>
+  <text x="26" y="24" fill="#64748b" font-size="8" font-weight="700" letter-spacing="0.7">SYSTEM INTERCEPTION & PERSISTENT ACTION STORE</text>
+
+  <rect x="16" y="108" width="728" height="98" rx="7" fill="#1e293b" fill-opacity="0.3" stroke="#334155" stroke-dasharray="3,3"/>
+  <text x="26" y="120" fill="#64748b" font-size="8" font-weight="700" letter-spacing="0.7">DATA NORMALIZATION, PERSISTENCE & AI REASONING</text>
+
+  <rect x="16" y="212" width="728" height="154" rx="7" fill="#1e293b" fill-opacity="0.3" stroke="#334155" stroke-dasharray="3,3"/>
+  <text x="26" y="224" fill="#64748b" font-size="8" font-weight="700" letter-spacing="0.7">NOTIFICATION SHADE ASSISTANT & 1-STAGE HEADLESS DISPATCH</text>
+
+  <!-- Box 1: Inbound Notifications -->
+  <g filter="url(#cardShadow)">
+    <rect x="28" y="34" width="185" height="56" rx="6" fill="url(#blueCard)" stroke="#0284c7" stroke-width="1.1"/>
+    <rect x="36" y="42" width="5" height="5" rx="2.5" fill="#38bdf8"/>
+    <text x="47" y="48" fill="#38bdf8" font-size="8.6" font-weight="700">INCOMING NOTIFICATIONS</text>
+    <text x="36" y="63" fill="#cbd5e1" font-size="7.8">WhatsApp • Teams • Slack</text>
+    <text x="36" y="76" fill="#94a3b8" font-size="7.2">Telegram • Gmail • Outlook</text>
+  </g>
+
+  <!-- Connector: Box 1 -> Box 2 -->
+  <path d="M 213 62 L 243 62" stroke="#38bdf8" stroke-width="1.6" fill="none" marker-end="url(#arrow)"/>
+
+  <!-- Box 2: Listener Service -->
+  <g filter="url(#cardShadow)">
+    <rect x="247" y="34" width="245" height="56" rx="6" fill="url(#blueCard)" stroke="#6366f1" stroke-width="1.1"/>
+    <rect x="255" y="42" width="5" height="5" rx="2.5" fill="#818cf8"/>
+    <text x="266" y="48" fill="#818cf8" font-size="8.6" font-weight="700">TriqxNotificationListenerService</text>
+    <text x="255" y="63" fill="#cbd5e1" font-size="7.8">• Evaluates VIP Contacts Whitelist</text>
+    <text x="255" y="76" fill="#94a3b8" font-size="7.2">• Filters Important Apps & Drops Noise</text>
+  </g>
+
+  <!-- Connector: Box 2 -> Box 3 -->
+  <path d="M 492 62 L 522 62" stroke="#c084fc" stroke-width="1.6" fill="none" marker-end="url(#arrowPurple)"/>
+
+  <!-- Box 3: ReplyActionStore -->
+  <g filter="url(#cardShadow)">
+    <rect x="526" y="34" width="206" height="56" rx="6" fill="url(#blueCard)" stroke="#a855f7" stroke-width="1.1"/>
+    <rect x="534" y="42" width="5" height="5" rx="2.5" fill="#c084fc"/>
+    <text x="545" y="48" fill="#c084fc" font-size="8.6" font-weight="700">ReplyActionStore (Two-Tier)</text>
+    <text x="534" y="63" fill="#cbd5e1" font-size="7.8">L1: Concurrent RAM Cache</text>
+    <text x="534" y="76" fill="#94a3b8" font-size="7.2">L2: SharedPreferences Disk Parcel</text>
+  </g>
+
+  <!-- Connector: Box 2 down to Box 4 -->
+  <path d="M 370 90 L 370 128" stroke="#38bdf8" stroke-width="1.6" fill="none" marker-end="url(#arrow)"/>
+
+  <!-- Box 4: Mapper Registry -->
+  <g filter="url(#cardShadow)">
+    <rect x="247" y="132" width="245" height="60" rx="6" fill="url(#blueCard)" stroke="#14b8a6" stroke-width="1.1"/>
+    <rect x="255" y="140" width="5" height="5" rx="2.5" fill="#2dd4bf"/>
+    <text x="266" y="146" fill="#2dd4bf" font-size="8.6" font-weight="700">NotificationMapperRegistry</text>
+    <text x="255" y="161" fill="#cbd5e1" font-size="7.6">• WhatsApp, Slack, Teams, Telegram, Email</text>
+    <text x="255" y="174" fill="#94a3b8" font-size="7.1">• Resolves MessagingStyle, "You" vs Sender</text>
+  </g>
+
+  <!-- Connector: Box 4 left to Box 5 -->
+  <path d="M 247 162 L 217 162" stroke="#4ade80" stroke-width="1.6" fill="none" marker-end="url(#arrowGreen)"/>
+
+  <!-- Box 5: Room Database -->
+  <g filter="url(#cardShadow)">
+    <rect x="28" y="132" width="185" height="60" rx="6" fill="url(#blueCard)" stroke="#10b981" stroke-width="1.1"/>
+    <rect x="36" y="140" width="5" height="5" rx="2.5" fill="#34d399"/>
+    <text x="47" y="146" fill="#34d399" font-size="8.6" font-weight="700">Room SQLite Database v12</text>
+    <text x="36" y="161" fill="#cbd5e1" font-size="7.6">• conversations (pre-aggregated)</text>
+    <text x="36" y="174" fill="#94a3b8" font-size="7.1">• priority_contacts • important_apps</text>
+  </g>
+
+  <!-- Connector: Box 4 right to Box 6 -->
+  <path d="M 492 162 L 522 162" stroke="#fbbf24" stroke-width="1.6" fill="none" marker-end="url(#arrowAmber)"/>
+
+  <!-- Box 6: AI Repository & Backend -->
+  <g filter="url(#cardShadow)">
+    <rect x="526" y="132" width="206" height="60" rx="6" fill="url(#blueCard)" stroke="#f59e0b" stroke-width="1.1"/>
+    <rect x="534" y="140" width="5" height="5" rx="2.5" fill="#fbbf24"/>
+    <text x="545" y="146" fill="#fbbf24" font-size="8.6" font-weight="700">OpenAiRepository & Backend AI</text>
+    <text x="534" y="161" fill="#cbd5e1" font-size="7.6">• Signature Hash & Stale Job Cancel</text>
+    <text x="534" y="174" fill="#94a3b8" font-size="7.1">• 3-Tier Prompt ➔ POST /ai/generate</text>
+  </g>
+
+  <!-- Connector: Box 6 down to Box 7 -->
+  <path d="M 629 192 L 629 233" stroke="#38bdf8" stroke-width="1.6" fill="none" marker-end="url(#arrow)"/>
+
+  <!-- Box 7: Notification Manager -->
+  <g filter="url(#cardShadow)">
+    <rect x="440" y="237" width="292" height="54" rx="6" fill="url(#blueCard)" stroke="#0ea5e9" stroke-width="1.1"/>
+    <rect x="448" y="244" width="5" height="5" rx="2.5" fill="#38bdf8"/>
+    <text x="459" y="250" fill="#38bdf8" font-size="8.6" font-weight="700">TriqxAssistantNotificationManager</text>
+    <text x="448" y="264" fill="#cbd5e1" font-size="7.6">Posts System Notification with Action Buttons:</text>
+    <text x="448" y="278" fill="#7dd3fc" font-size="7.4" font-weight="600">[ 1️⃣ Send #1 ]  [ 2️⃣ Send #2 ]  [ ✏️ Edit ]</text>
+  </g>
+
+  <!-- Connector: Box 7 left to Box 8 -->
+  <path d="M 440 264 L 396 264" stroke="#f43f5e" stroke-width="1.6" fill="none" marker-end="url(#arrowRose)"/>
+
+  <!-- Box 8: TriqxReplyReceiver -->
+  <g filter="url(#cardShadow)">
+    <rect x="230" y="237" width="162" height="54" rx="6" fill="url(#blueCard)" stroke="#f43f5e" stroke-width="1.1"/>
+    <rect x="238" y="244" width="5" height="5" rx="2.5" fill="#fb7185"/>
+    <text x="249" y="250" fill="#fb7185" font-size="8.6" font-weight="700">TriqxReplyReceiver</text>
+    <text x="238" y="264" fill="#cbd5e1" font-size="7.6">BroadcastReceiver for 1-Tap</text>
+    <text x="238" y="278" fill="#94a3b8" font-size="7.1">Smart Reply & Custom Text</text>
+  </g>
+
+  <!-- Connector: Box 8 down-left to Box 9A -->
+  <path d="M 270 291 L 270 306 L 150 306 L 150 317" stroke="#60a5fa" stroke-width="1.6" fill="none" marker-end="url(#arrow)"/>
+
+  <!-- Connector: Box 8 down-right to Box 9B -->
+  <path d="M 350 291 L 350 306 L 470 306 L 470 317" stroke="#4ade80" stroke-width="1.6" fill="none" marker-end="url(#arrowGreen)"/>
+
+  <!-- Box 9A: Email Dispatcher -->
+  <g filter="url(#cardShadow)">
+    <rect x="28" y="321" width="245" height="40" rx="5" fill="url(#blueCard)" stroke="#3b82f6" stroke-width="1.1"/>
+    <text x="38" y="335" fill="#60a5fa" font-size="8.1" font-weight="700">EmailReplyDispatcher (Cloud APIs)</text>
+    <text x="38" y="349" fill="#cbd5e1" font-size="7.2">Gmail REST API (MIME) • MS Graph (/sendMail)</text>
+  </g>
+
+  <!-- Box 9B: RemoteInput Dispatcher -->
+  <g filter="url(#cardShadow)">
+    <rect x="348" y="321" width="245" height="40" rx="5" fill="url(#blueCard)" stroke="#22c55e" stroke-width="1.1"/>
+    <text x="358" y="335" fill="#4ade80" font-size="8.1" font-weight="700">RemoteInput Dispatch (Chat Apps)</text>
+    <text x="358" y="349" fill="#cbd5e1" font-size="7.2">Retrieves Action from Store ➔ Fires PendingIntent</text>
+  </g>
+
+  <!-- Loop back from Dispatchers to DB -->
+  <path d="M 28 341 L 16 341 L 16 182 L 24 182" stroke="#4ade80" stroke-width="1.2" stroke-dasharray="3,3" fill="none" marker-end="url(#arrowGreen)"/>
+
+  <!-- Fallback Box -->
+  <g filter="url(#cardShadow)">
+    <rect x="608" y="321" width="124" height="40" rx="5" fill="url(#blueCard)" stroke="#eab308" stroke-width="1.1"/>
+    <text x="616" y="335" fill="#facc15" font-size="7.8" font-weight="700">Offline Fallback</text>
+    <text x="616" y="349" fill="#cbd5e1" font-size="6.8">Clipboard + Launch App</text>
+  </g>
+  <path d="M 593 341 L 604 341" stroke="#facc15" stroke-width="1.2" stroke-dasharray="3,3" fill="none" marker-end="url(#arrowAmber)"/>
+</svg>
+</div>
+
+<h3>Core Engineering Innovations</h3>
+
+<div class="flow-step">
+  <div class="flow-number">1</div>
+  <div class="flow-content">
+    <strong>Resilient Two-Tier Reply Action Store (<code>ReplyActionStore</code>)</strong>
+    <em>The Challenge:</em> Android's native <code>Notification.Action</code> and <code>PendingIntent</code> references are volatile objects destroyed by the OS when notifications are dismissed or the app process dies.<br>
+    <em>The Solution:</em> Triqx serializes Android <code>Notification.Action</code> parcels into raw byte arrays, encodes them as Base64 strings, and stores them in persistent disk storage backed by an L1 in-memory cache. This allows Triqx to fire replies to conversations hours after the original notification was dismissed, and even across device reboots.
+  </div>
+</div>
+
+<div class="flow-step">
+  <div class="flow-number">2</div>
+  <div class="flow-content">
+    <strong>Modular Strategy Pattern Parsing Engine (<code>NotificationMapperRegistry</code>)</strong>
+    Dispatches notifications through specialized mappers (<code>WhatsAppNotificationMapper</code>, <code>TeamsNotificationMapper</code>, <code>SlackNotificationMapper</code>, <code>TelegramNotificationMapper</code>, <code>EmailNotificationMapper</code>, and <code>DefaultNotificationMapper</code>). Each mapper parses complex AndroidX <code>MessagingStyle</code> bundles, isolates group senders, extracts contact URIs, and strips platform-specific noise like WhatsApp's <em>"⤷ You got a reply"</em>.
+  </div>
+</div>
+
+<div class="doc-running-footer">
+  <span>TRIQX — Intelligent AI Communication Assistant</span>
+  <span>Section 4 • Pipeline & Innovations</span>
+  <span>Page 3 of 5</span>
+</div>
+
+<!-- ==================== PAGE 4 ==================== -->
+<div class="page-break-before"></div>
+<div class="doc-running-header">
+  <span>TRIQX — Technical Architecture</span>
+  <span>Section 4 (Cont.) & Section 5 • Dispatch & Security</span>
+</div>
+
+<div class="flow-step">
+  <div class="flow-number">3</div>
+  <div class="flow-content">
+    <strong>In-Flight Job Debouncing & Deterministic Signature Caching</strong>
+    To prevent redundant API costs and UI flicker, <code>OpenAiRepository</code> hashes each incoming thread with a deterministic signature (<code>sender|body|timestamp</code>). If an identical message is received, cached replies are returned in 0ms. If a rapid follow-up message arrives while generation is in progress, the obsolete in-flight coroutine job is instantly cancelled via structured coroutine cancellation.
+  </div>
+</div>
+
+<div class="flow-step">
+  <div class="flow-number">4</div>
+  <div class="flow-content">
+    <strong>3-Tier Multi-Layer Prompt Merging Engine (<code>resolveMergedPrompt</code>)</strong>
+    Combines three independent prompt layers dynamically at runtime:
+    <div style="background:#f1f5f9; padding:4px 8px; border-radius:4px; margin:3px 0; font-family:monospace; font-size:7.5pt;">
+      Final Prompt = [Global Prompt] ⊕ [App-Specific Prompt] ⊕ [Conversation-Specific Prompt]
+    </div>
+    Ensures that global corporate or user guidelines (e.g. <em>"Keep under 20 words"</em>), platform styles (e.g. <em>"Professional & direct on Slack"</em>), and relationship instructions (e.g. <em>"Use formal German for Dr. Weber"</em>) are synthesized simultaneously.
+  </div>
+</div>
+
+<div class="flow-step">
+  <div class="flow-number">5</div>
+  <div class="flow-content">
+    <strong>Polymorphic Email Dispatch Subsystem (<code>EmailReplyDispatcher</code>)</strong>
+    Abstracts Google Gmail and Microsoft Outlook under a unified <code>EmailService</code> interface. When a reply is initiated, the system inspects the target account, acquires valid OAuth Bearer tokens (refreshing automatically if expired), and formats the appropriate cloud payload (RFC 2822 MIME for Gmail, JSON for Microsoft Graph) without launching third-party clients.
+  </div>
+</div>
+
+<div class="flow-step">
+  <div class="flow-number">6</div>
+  <div class="flow-content">
+    <strong>Graceful Multi-Stage Fallback Matrix</strong>
+    If a headless reply cannot be executed directly (e.g., an email account is not connected or a chat app revokes reply actions), Triqx initiates a 3-tier fallback sequence:
+    <ul>
+      <li><strong>Tier 1:</strong> Headless RemoteInput / Cloud REST API (Preferred)</li>
+      <li><strong>Tier 2:</strong> Deep-link <code>ACTION_SENDTO</code> Intent to pre-fill draft in target app</li>
+      <li><strong>Tier 3:</strong> Auto-copy reply to clipboard and launch target application</li>
+    </ul>
+  </div>
+</div>
+
+<h2><span class="section-num">05</span> Enterprise Security, Privacy & Reliability</h2>
+<div class="grid-2">
+  <div class="card">
+    <div class="card-title">🔒 Hardware-Backed Keystore Encryption</div>
+    All session tokens (access, refresh) and sensitive user profile details are encrypted at rest via <code>EncryptedSharedPreferences</code> using <strong>AES-256 GCM</strong> encryption and <strong>AES-256 SIV</strong> keys backed by the hardware Android Keystore.
+  </div>
+  <div class="card">
+    <div class="card-title">🛡️ Strict Device-First Privacy Whitelisting</div>
+    Notifications from non-whitelisted apps and non-VIP contacts are immediately discarded in memory. They are never transmitted over the network, processed by AI models, or saved in conversational storage.
+  </div>
+  <div class="card">
+    <div class="card-title">🔄 Silent Background Token Refresh</div>
+    If an AI or Auth API call encounters an HTTP 401 Unauthorized response, <code>BackendAiService</code> automatically intercepts the failure, executes a silent refresh via the refresh token, and retries the original request seamlessly.
+  </div>
+  <div class="card">
+    <div class="card-title">🧹 Zero-Footprint Secure Sign-Out</div>
+    When the user signs out, an exhaustive wipe is executed: all Room SQLite tables are cleared, email OAuth tokens are wiped, serialized reply actions are destroyed, active OS notifications are cancelled, and AI caches are flushed.
+  </div>
+</div>
+
+<div class="doc-running-footer">
+  <span>TRIQX — Intelligent AI Communication Assistant</span>
+  <span>Section 4 & 5 • Mechanics & Security</span>
+  <span>Page 4 of 5</span>
+</div>
+
+<!-- ==================== PAGE 5 ==================== -->
+<div class="page-break-before"></div>
+<div class="doc-running-header">
+  <span>TRIQX — Specifications & Roadmap</span>
+  <span>Section 6, 7 & 8 • Tech Stack & Strategy</span>
+</div>
+
+<h2><span class="section-num">06</span> Technology Stack & Specifications</h2>
+<table>
+  <thead>
+    <tr>
+      <th style="width: 25%;">Layer / Concern</th>
+      <th style="width: 40%;">Technology / Library</th>
+      <th style="width: 35%;">Purpose / Architectural Role</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Language & SDK</strong></td>
+      <td><strong>Kotlin 100%</strong> (JVM 11)<br><code>minSdk 29</code> (Android 10), <code>targetSdk 37</code></td>
+      <td>Modern Android baseline with modern Coroutine concurrency, type safety, and Android 14+ platform parity.</td>
+    </tr>
+    <tr>
+      <td><strong>UI Framework</strong></td>
+      <td><strong>Jetpack Compose</strong> (Material 3 Expressive)<br>Navigation Compose, Coil, Chris Banes Haze</td>
+      <td>Declarative UI with fluid animations, adaptive layouts, and real-time glassmorphism / liquid blur aesthetics.</td>
+    </tr>
+    <tr>
+      <td><strong>Architecture & Concurrency</strong></td>
+      <td><strong>MVVM + Clean Architecture</strong><br>Kotlin Coroutines, SupervisorJob, StateFlow</td>
+      <td>Decoupled, reactive state management with non-blocking I/O execution across background services.</td>
+    </tr>
+    <tr>
+      <td><strong>Dependency Injection</strong></td>
+      <td><strong>Dagger Hilt + KSP</strong></td>
+      <td>Compile-time dependency injection across singletons, background services, view models, and repositories.</td>
+    </tr>
+    <tr>
+      <td><strong>Local Persistence</strong></td>
+      <td><strong>Android Room Database v12</strong><br>SQLite, Room KTX, Custom TypeConverters</td>
+      <td>ACID-compliant storage for conversation history, VIP contacts, important apps, and diagnostic telemetry.</td>
+    </tr>
+    <tr>
+      <td><strong>Cloud & Auth APIs</strong></td>
+      <td><strong>AppAuth-Android</strong>, Google Play Services Auth,<br>OkHttp 3, Gson, Custom Phone OTP Service</td>
+      <td>Standards-compliant OAuth 2.0 token management for Gmail, Microsoft Graph, and Triqx backend microservices.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2><span class="section-num">07</span> Current Milestones & Future Roadmap</h2>
+<div class="grid-2">
+  <div class="card" style="padding: 6px 9px; margin-bottom: 4px;">
+    <div class="card-title" style="color: #15803d; font-size: 8.4pt;">✅ Completed & Operational</div>
+    <ul style="margin: 2px 0 2px 14px; font-size: 8pt; line-height: 1.35;">
+      <li><strong>Cross-Platform Interception:</strong> WhatsApp, Teams, Slack, Telegram, Gmail & Outlook.</li>
+      <li><strong>Contextual AI Replies:</strong> In-flight debouncing, 0ms cache hits & 3-tier prompt merging.</li>
+      <li><strong>Persistent Reply Store:</strong> Two-Tier RAM + Disk marshaling surviving OS reboots.</li>
+      <li><strong>Notification Assistant:</strong> 1-Tap numbered action buttons and inline RemoteInput editing.</li>
+      <li><strong>Polymorphic Cloud Dispatch:</strong> Background Gmail REST API & MS Graph API replies.</li>
+    </ul>
+  </div>
+  <div class="card" style="padding: 6px 9px; margin-bottom: 4px;">
+    <div class="card-title" style="color: #1d4ed8; font-size: 8.4pt;">🚀 Roadmap & Next Horizons</div>
+    <ul style="margin: 2px 0 2px 14px; font-size: 8pt; line-height: 1.35;">
+      <li><strong>On-Device LLM (Gemini Nano):</strong> Local AI inference via Android AICore when offline.</li>
+      <li><strong>Wear OS Companion:</strong> 1-Tap smart reply triggers directly from wristwear.</li>
+      <li><strong>Scheduled Dispatch:</strong> Queue drafts to send automatically during business hours.</li>
+      <li><strong>Enterprise Connectors:</strong> Native integrations for Jira, Linear & Zendesk alerts.</li>
+    </ul>
+  </div>
+</div>
+
+<h2><span class="section-num">08</span> Strategic Takeaways for Leadership</h2>
+<div class="callout" style="padding: 6px 10px; margin: 4px 0;">
+  <ul style="margin: 2px 0 2px 14px; font-size: 8.2pt; line-height: 1.38;">
+    <li><strong>Solves High-Value Friction:</strong> Eliminates the cognitive fatigue and lost productivity of jumping across 6 communication tools dozens of times daily.</li>
+    <li><strong>Solves Android Platform Limits:</strong> Overcomes volatile OS notification lifecycles via persistent parcel marshaling to disk, guaranteeing replies are never lost.</li>
+    <li><strong>Production-Grade Architecture:</strong> Engineered to the highest standards—Jetpack Compose, Clean Architecture, Hilt DI, AES-256 hardware encryption, and proactive token management.</li>
+  </ul>
+</div>
+
+<div class="doc-running-footer">
+  <span>TRIQX — Intelligent AI Communication Assistant</span>
+  <span>Section 6, 7 & 8 • Specifications & Roadmap</span>
+  <span>Page 5 of 5 • Confidential</span>
+</div>
+
+</body>
+</html>

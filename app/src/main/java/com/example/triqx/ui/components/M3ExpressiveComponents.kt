@@ -1,7 +1,9 @@
-﻿package com.example.triqx.ui.components
+package com.example.triqx.ui.components
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -520,3 +522,114 @@ fun M3ExpressiveKeypad(
         }
     }
 }
+
+/**
+ * Material 3 Expressive Pill Tab Switcher.
+ * Connected capsule container with a smooth spring-animated sliding pill indicator.
+ * Displays bold expressive typography and subtle count badges without icons.
+ */
+@Composable
+fun <T> M3ExpressivePillTabSwitcher(
+    tabs: List<T>,
+    selectedTab: T,
+    onTabSelected: (T) -> Unit,
+    tabLabel: (T) -> String,
+    modifier: Modifier = Modifier,
+    tabBadgeCount: ((T) -> Int)? = null,
+    containerColor: Color = MaterialTheme.colorScheme.surfaceContainerHigh,
+    activePillColor: Color = MaterialTheme.colorScheme.primary,
+    activeContentColor: Color = MaterialTheme.colorScheme.onPrimary,
+    inactiveContentColor: Color = MaterialTheme.colorScheme.onSurfaceVariant
+) {
+    val selectedIndex = tabs.indexOf(selectedTab).coerceAtLeast(0)
+    val tabCount = tabs.size
+
+    BoxWithConstraints(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(48.dp)
+            .clip(CircleShape)
+            .background(containerColor)
+            .padding(4.dp)
+    ) {
+        val tabWidth = if (tabCount > 0) maxWidth / tabCount else 0.dp
+        val indicatorOffset by animateDpAsState(
+            targetValue = tabWidth * selectedIndex,
+            animationSpec = spring(
+                dampingRatio = Spring.DampingRatioLowBouncy,
+                stiffness = Spring.StiffnessMediumLow
+            ),
+            label = "pillIndicatorOffset"
+        )
+
+        // Sliding Active Pill Background
+        if (tabCount > 0) {
+            Box(
+                modifier = Modifier
+                    .offset(x = indicatorOffset)
+                    .width(tabWidth)
+                    .fillMaxHeight()
+                    .clip(CircleShape)
+                    .background(activePillColor)
+            )
+        }
+
+        // Tabs Clickable Items
+        Row(
+            modifier = Modifier.fillMaxSize(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            tabs.forEachIndexed { index, tab ->
+                val isSelected = index == selectedIndex
+                val badgeCount = tabBadgeCount?.invoke(tab) ?: 0
+
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .clip(CircleShape)
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onClick = { onTabSelected(tab) }
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Text(
+                            text = tabLabel(tab),
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                            color = if (isSelected) activeContentColor else inactiveContentColor
+                        )
+
+                        if (badgeCount > 0) {
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Surface(
+                                shape = CircleShape,
+                                color = if (isSelected) {
+                                    activeContentColor.copy(alpha = 0.22f)
+                                } else {
+                                    MaterialTheme.colorScheme.surfaceContainerHighest
+                                }
+                            ) {
+                                Text(
+                                    text = "$badgeCount",
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontWeight = FontWeight.Bold
+                                    ),
+                                    color = if (isSelected) activeContentColor else inactiveContentColor,
+                                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+

@@ -17,5 +17,7 @@ data class ConversationEntity(
     val receiverIdentifier: String? = null,      // User's receiving account email or identifier (e.g. raj.harsh2001@gmail.com)
     val messages: List<ChatMessage> = emptyList(), // Full conversation history
     val latestTimestamp: Long,                   // Timestamp of the latest message for sorting
-    val latestNotificationKey: String? = null    // Android notification slot key for live dismiss/reply
+    val latestNotificationKey: String? = null,   // Android notification slot key for live dismiss/reply
+    val customPrompt: String? = null,            // Conversation-specific AI prompt override
+    val replyCount: Int? = null                  // Conversation-specific number of replies override
 )

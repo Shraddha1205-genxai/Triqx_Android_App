@@ -18,6 +18,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.example.triqx.ui.theme.Dimens
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -84,10 +85,10 @@ fun NotificationDetailsScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(top = innerPadding.calculateTopPadding())
-                .padding(16.dp)
+                .padding(top = innerPadding.calculateTopPadding() + Dimens.ScreenTopPadding)
+                .padding(horizontal = Dimens.SpacingStandard)
                 .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            verticalArrangement = Arrangement.spacedBy(Dimens.SpacingMedium)
         ) {
             Surface(
                 modifier = Modifier.fillMaxWidth(),

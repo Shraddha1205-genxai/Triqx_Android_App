@@ -32,6 +32,9 @@ interface NotificationDao {
     @Query("DELETE FROM notifications WHERE notificationKey = :key")
     suspend fun deleteNotificationByKey(key: String)
 
+    @Query("DELETE FROM notifications WHERE packageName = :packageName AND (title = :title OR (:title IS NULL AND title IS NULL))")
+    suspend fun deleteByPackageAndTitle(packageName: String, title: String?)
+
     @Query("DELETE FROM notifications")
     suspend fun clearAll()
 }
