@@ -15,6 +15,11 @@ data class VerifyOtpResult(
 )
 
 /**
+ * Exception thrown when a refresh token is rejected as invalid, expired, or revoked by the server.
+ */
+class InvalidRefreshTokenException(message: String = "Invalid or revoked refresh token") : Exception(message)
+
+/**
  * Interface defining OTP authentication and user profile service contract.
  */
 interface OtpAuthService {

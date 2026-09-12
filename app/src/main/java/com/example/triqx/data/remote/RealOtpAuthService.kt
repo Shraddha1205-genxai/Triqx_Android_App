@@ -184,10 +184,13 @@ class RealOtpAuthService @Inject constructor(
                 if ((response.code == 401 || responseBody.contains("token", ignoreCase = true)) && !isRetry) {
                     val sessionManager = userSessionManagerProvider.get()
                     Log.i(TAG, "[UPDATE PROFILE] Auth token rejected (HTTP ${response.code}). Attempting token refresh...")
-                    val refreshedToken = sessionManager.getValidAccessToken(this, forceRefresh = true, failedToken = accessToken)
-                    if (!refreshedToken.isNullOrBlank() && refreshedToken != accessToken) {
+                    val refreshResult = sessionManager.refreshAccessToken(this, failedToken = accessToken)
+                    if (refreshResult.isSuccess) {
+                        val refreshedToken = refreshResult.getOrThrow()
                         Log.i(TAG, "[UPDATE PROFILE] Token refreshed successfully. Retrying profile update...")
                         return executeUpdateProfile(refreshedToken, profile, isRetry = true)
+                    } else {
+                        Log.w(TAG, "[UPDATE PROFILE] Token refresh failed: ${refreshResult.exceptionOrNull()?.message}")
                     }
                 }
             }
@@ -246,15 +249,19 @@ class RealOtpAuthService @Inject constructor(
         }
 
         try {
-            val requestDto = RefreshTokenRequest(refreshToken = cleanRefresh, token = cleanRefresh)
+            val requestDto = RefreshTokenRequest(refreshToken = cleanRefresh)
             val jsonBody = gson.toJson(requestDto)
             val url = ApiRoutes.Auth.refreshTokenUrl()
 
-            Log.i(TAG, "==================== [AUTH REFRESH TOKEN REQUEST] ====================")
-            Log.i(TAG, "URL: POST $url")
-            Log.i(TAG, "Headers: Content-Type: application/json")
-            Log.i(TAG, "Payload: $jsonBody")
-            Log.i(TAG, "=======================================================================")
+            val logReq = buildString {
+                appendLine("==================== [AUTH REFRESH TOKEN REQUEST] ====================")
+                appendLine("URL: POST $url")
+                appendLine("Headers: Content-Type: application/json")
+                appendLine("Payload: $jsonBody")
+                append("=======================================================================")
+            }
+            Log.i(TAG, logReq)
+            Log.i("BackendAiService", logReq)
 
             val request = Request.Builder()
                 .url(url)
@@ -265,10 +272,14 @@ class RealOtpAuthService @Inject constructor(
             val response = okHttpClient.newCall(request).execute()
             val responseBody = response.body?.string().orEmpty()
 
-            Log.i(TAG, "==================== [AUTH REFRESH TOKEN RESPONSE] ===================")
-            Log.i(TAG, "HTTP Status: ${response.code} (${response.message})")
-            Log.i(TAG, "Response Body: ${if (responseBody.isNotBlank()) responseBody else "(empty)"}")
-            Log.i(TAG, "=======================================================================")
+            val logRes = buildString {
+                appendLine("==================== [AUTH REFRESH TOKEN RESPONSE] ===================")
+                appendLine("HTTP Status: ${response.code} (${response.message})")
+                appendLine("Response Body: ${if (responseBody.isNotBlank()) responseBody else "(empty)"}")
+                append("=======================================================================")
+            }
+            Log.i(TAG, logRes)
+            Log.i("BackendAiService", logRes)
 
             val parsedResponse = try {
                 gson.fromJson(responseBody, RefreshTokenResponse::class.java)
@@ -286,7 +297,11 @@ class RealOtpAuthService @Inject constructor(
                 }
             } else {
                 val errorMsg = parsedResponse?.message ?: "Token refresh failed (${response.code}: ${response.message})"
-                Result.failure(Exception(errorMsg))
+                if (response.code == 401 || errorMsg.contains("Invalid refresh token", ignoreCase = true) || errorMsg.contains("revoked", ignoreCase = true)) {
+                    Result.failure(InvalidRefreshTokenException(errorMsg))
+                } else {
+                    Result.failure(Exception(errorMsg))
+                }
             }
         } catch (e: Exception) {
             Log.e(TAG, "[AUTH REFRESH TOKEN EXCEPTION]: ${e.message}", e)

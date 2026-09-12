@@ -78,8 +78,22 @@ class BackendAiService @Inject constructor(
             requestJson
         }
 
+        val isExpired = sessionManager.isTokenExpired()
+        if (isExpired && !sessionManager.getAccessToken().isNullOrBlank()) {
+            val hasRefresh = !sessionManager.getRefreshToken().isNullOrBlank()
+            Log.i(TAG, "[BACKEND AI] Access token is expired. Attempting proactive refresh (has refreshToken: $hasRefresh)...")
+        }
         val authToken = sessionManager.getValidAccessToken(otpAuthServiceProvider.get())
-        val authHeader = if (!authToken.isNullOrBlank()) "Bearer $authToken" else "(none - unauthenticated)"
+        if (authToken.isNullOrBlank()) {
+            if (sessionManager.isLoggedIn.value) {
+                Log.w(TAG, "[BACKEND AI] User is logged in but has no valid access token. Session expired or revoked.")
+                throw IOException("Session expired. Please log in again to refresh your account.")
+            } else {
+                Log.w(TAG, "[BACKEND AI] User is not logged in. Cannot generate smart replies without authentication.")
+                throw IOException("Authentication required to generate replies.")
+            }
+        }
+        val authHeader = "Bearer $authToken"
 
         val logRequest = buildString {
             appendLine("==================== [AI GENERATE REPLIES REQUEST] ====================")
@@ -96,12 +110,8 @@ class BackendAiService @Inject constructor(
         val requestBuilder = Request.Builder()
             .url(endpointUrl)
             .addHeader("Content-Type", "application/json")
+            .addHeader("Authorization", authHeader)
             .post(requestJson.toRequestBody(JSON_MEDIA_TYPE))
-
-        // Attach user session auth token if logged in
-        if (!authToken.isNullOrBlank()) {
-            requestBuilder.addHeader("Authorization", "Bearer $authToken")
-        }
 
         try {
             client.executeCancellable(requestBuilder.build()).use { response ->
@@ -118,23 +128,24 @@ class BackendAiService @Inject constructor(
                 if (!response.isSuccessful) {
                     // If token expired (HTTP 401) and we haven't retried yet, attempt automatic silent token refresh
                     if ((response.code == 401 || responseBody.contains("expired", ignoreCase = true) || responseBody.contains("token", ignoreCase = true)) && !isRetry) {
-                        Log.i(TAG, "[BACKEND AI] Auth token rejected (HTTP ${response.code}). Attempting synchronized token refresh...")
-                        val refreshedToken = sessionManager.getValidAccessToken(
+                        val hasRefresh = !sessionManager.getRefreshToken().isNullOrBlank()
+                        Log.i(TAG, "[BACKEND AI] Auth token rejected (HTTP ${response.code}). Attempting token refresh (refreshToken present: $hasRefresh)...")
+                        val refreshResult = sessionManager.refreshAccessToken(
                             otpAuthService = otpAuthServiceProvider.get(),
-                            forceRefresh = true,
                             failedToken = authToken
                         )
-                        if (!refreshedToken.isNullOrBlank() && refreshedToken != authToken) {
-                            Log.i(TAG, "[BACKEND AI] Token refreshed successfully. Retrying request...")
+                        if (refreshResult.isSuccess) {
+                            Log.i(TAG, "[BACKEND AI] Token refreshed successfully. Retrying request with fresh token...")
                             return executeGenerateReplies(baseUrl, request, isRetry = true)
                         } else {
-                            Log.w(TAG, "[BACKEND AI] Synchronized token refresh did not yield a new token.")
+                            val failureReason = refreshResult.exceptionOrNull()?.message ?: "Unknown error"
+                            Log.w(TAG, "[BACKEND AI] Token refresh failed: $failureReason")
                         }
                     }
 
                     val friendlyMessage = when {
                         response.code == 401 || responseBody.contains("token", ignoreCase = true) ->
-                            "Session expired. Please log out from Settings and log in again to refresh your account."
+                            "Session expired. Please log in again to refresh your account."
                         responseBody.isNotBlank() ->
                             "Backend returned HTTP ${response.code}: $responseBody"
                         else ->

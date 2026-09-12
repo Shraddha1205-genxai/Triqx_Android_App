@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import android.util.Log
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import com.example.triqx.data.remote.InvalidRefreshTokenException
 import com.example.triqx.data.remote.OtpAuthService
 import com.google.gson.Gson
 import com.google.gson.JsonParser
@@ -164,6 +165,54 @@ class UserSessionManager @Inject constructor(
     private val tokenRefreshMutex = Mutex()
 
     /**
+     * Thread-safe method to explicitly refresh the access token using the stored refresh token.
+     * Returns a [Result] containing the new access token on success, or an exception describing the failure.
+     */
+    suspend fun refreshAccessToken(
+        otpAuthService: OtpAuthService,
+        failedToken: String? = null
+    ): Result<String> = tokenRefreshMutex.withLock {
+        val currentToken = getAccessToken()
+
+        // If another concurrent coroutine already refreshed it while this coroutine was waiting on the mutex:
+        if (failedToken != null && !currentToken.isNullOrBlank() && currentToken != failedToken && !isTokenExpired(currentToken)) {
+            Log.i(TAG, "[TOKEN REFRESH] Token was already refreshed by another concurrent request. Reusing fresh token.")
+            return Result.success(currentToken)
+        }
+
+        val refreshToken = getRefreshToken()
+        if (refreshToken.isNullOrBlank()) {
+            val msg = "No refresh token stored in session manager. User must re-login to obtain a valid session."
+            Log.w(TAG, "[TOKEN REFRESH] $msg")
+            return Result.failure(IllegalStateException(msg))
+        }
+
+        Log.i(TAG, "[TOKEN REFRESH] Calling /api/auth/refresh with refresh token...")
+        val refreshResult = otpAuthService.refreshToken(refreshToken)
+        return if (refreshResult.isSuccess) {
+            val (newAccess, newRefresh) = refreshResult.getOrThrow()
+            updateTokens(newAccess, newRefresh)
+            Log.i(TAG, "[TOKEN REFRESH] Successfully updated access and refresh tokens.")
+            Result.success(newAccess)
+        } else {
+            val ex = refreshResult.exceptionOrNull()
+            val errorMsg = ex?.message ?: "Unknown token refresh error"
+            Log.w(TAG, "[TOKEN REFRESH] Silent token refresh failed: $errorMsg")
+
+            // If the refresh token was revoked, invalidated, or expired:
+            if (ex is InvalidRefreshTokenException ||
+                errorMsg.contains("Invalid refresh token", ignoreCase = true) ||
+                errorMsg.contains("revoked", ignoreCase = true)
+            ) {
+                Log.w(TAG, "[TOKEN REFRESH] Refresh token is permanently invalid/revoked (e.g. logged in on another device). Auto-logging out and clearing session.")
+                clearSession()
+            }
+
+            Result.failure(ex ?: Exception(errorMsg))
+        }
+    }
+
+    /**
      * Centralized, thread-safe access token retriever that proactively refreshes
      * expired tokens using [OtpAuthService] with a coroutine Mutex.
      */
@@ -171,39 +220,15 @@ class UserSessionManager @Inject constructor(
         otpAuthService: OtpAuthService,
         forceRefresh: Boolean = false,
         failedToken: String? = null
-    ): String? = tokenRefreshMutex.withLock {
-        val currentToken = getAccessToken()
-
-        // If forceRefresh was requested because a specific token failed with 401:
-        // Check if another coroutine already refreshed it while this one was waiting!
-        if (failedToken != null && !currentToken.isNullOrBlank() && currentToken != failedToken && !isTokenExpired(currentToken)) {
-            Log.i(TAG, "[TOKEN REFRESH] Token was already refreshed by another concurrent request. Reusing fresh token.")
-            return currentToken
+    ): String? {
+        if (!forceRefresh) {
+            val currentToken = getAccessToken()
+            if (!currentToken.isNullOrBlank() && !isTokenExpired(currentToken)) {
+                return currentToken
+            }
         }
-
-        // If not forcing a refresh and token is still valid, return it directly
-        if (!forceRefresh && !currentToken.isNullOrBlank() && !isTokenExpired(currentToken)) {
-            return currentToken
-        }
-
-        val refreshToken = getRefreshToken()
-        if (refreshToken.isNullOrBlank()) {
-            Log.w(TAG, "[TOKEN REFRESH] No refresh token stored in session manager.")
-            return currentToken
-        }
-
-        Log.i(TAG, "[TOKEN REFRESH] Access token expired or refresh requested. Calling /api/auth/refresh...")
-        val refreshResult = otpAuthService.refreshToken(refreshToken)
-        if (refreshResult.isSuccess) {
-            val (newAccess, newRefresh) = refreshResult.getOrThrow()
-            updateTokens(newAccess, newRefresh)
-            Log.i(TAG, "[TOKEN REFRESH] Successfully updated access and refresh tokens.")
-            newAccess
-        } else {
-            val errorMsg = refreshResult.exceptionOrNull()?.message
-            Log.w(TAG, "[TOKEN REFRESH] Silent token refresh failed: $errorMsg")
-            currentToken
-        }
+        val result = refreshAccessToken(otpAuthService, failedToken)
+        return result.getOrNull()
     }
 
     @Synchronized
