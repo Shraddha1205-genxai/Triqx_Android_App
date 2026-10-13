@@ -10,5 +10,9 @@ data class ParsedNotification(
     val bodyText: String,          // Clean message content (without redundant sender prefix)
     val chatTag: String,           // Stable thread identifier (trimmed of whitespace/newlines)
     val isGroup: Boolean,          // Whether the notification belongs to a group/channel
-    val isFromYou: Boolean = individualSender.equals("You", ignoreCase = true)
+    val isFromYou: Boolean = individualSender.equals("You", ignoreCase = true),
+    val senderIdentifier: String? = null,  // Specific sender email or phone
+    val receiverIdentifier: String? = null, // Receiving account email or identifier
+    val mediaUri: String? = null,          // Image / Sticker content URI if available
+    val mediaType: String? = null          // MIME type e.g. "image/jpeg", "image/webp"
 )

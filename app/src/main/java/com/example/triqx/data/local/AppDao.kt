@@ -28,4 +28,16 @@ interface AppDao {
 
     @Query("SELECT EXISTS(SELECT 1 FROM important_apps WHERE packageName = :packageName)")
     fun isAppImportant(packageName: String): Flow<Boolean>
+
+    @Query("SELECT prompt FROM important_apps WHERE packageName = :packageName LIMIT 1")
+    suspend fun getPromptForApp(packageName: String): String?
+
+    @Query("UPDATE important_apps SET prompt = :prompt WHERE packageName = :packageName")
+    suspend fun updateAppPrompt(packageName: String, prompt: String?)
+
+    @Query("SELECT replyStyle FROM important_apps WHERE packageName = :packageName LIMIT 1")
+    suspend fun getReplyStyleForApp(packageName: String): String?
+
+    @Query("UPDATE important_apps SET prompt = :prompt, replyStyle = :replyStyle WHERE packageName = :packageName")
+    suspend fun updateAppConfig(packageName: String, prompt: String?, replyStyle: String?)
 }

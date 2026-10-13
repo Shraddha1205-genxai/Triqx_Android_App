@@ -19,4 +19,15 @@ object NetworkModule {
             .serializeNulls()
             .create()
     }
+
+    @Provides
+    @Singleton
+    fun provideOkHttpClient(): okhttp3.OkHttpClient {
+        return okhttp3.OkHttpClient.Builder()
+            .connectTimeout(2, java.util.concurrent.TimeUnit.MINUTES)
+            .readTimeout(2, java.util.concurrent.TimeUnit.MINUTES)
+            .writeTimeout(2, java.util.concurrent.TimeUnit.MINUTES)
+            .build()
+    }
 }
+

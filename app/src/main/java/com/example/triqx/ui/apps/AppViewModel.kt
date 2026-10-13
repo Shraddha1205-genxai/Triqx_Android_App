@@ -17,13 +17,15 @@ import javax.inject.Inject
 data class AppInfo(
     val packageName: String,
     val appName: String,
-    val isImportant: Boolean = false
+    val isImportant: Boolean = false,
+    val prompt: String? = null,
+    val replyStyle: String? = "Concise"
 )
 
 @HiltViewModel
 class AppViewModel @Inject constructor(
     private val appDao: AppDao,
-    @ApplicationContext private val context: Context
+    @param:ApplicationContext private val context: Context
 ) : ViewModel() {
 
     private val packageManager: PackageManager = context.packageManager
@@ -39,7 +41,9 @@ class AppViewModel @Inject constructor(
                 AppInfo(
                     packageName = entity.packageName,
                     appName = entity.appName,
-                    isImportant = true
+                    isImportant = true,
+                    prompt = entity.prompt,
+                    replyStyle = entity.replyStyle ?: "Concise"
                 )
             }
         }
@@ -47,10 +51,17 @@ class AppViewModel @Inject constructor(
 
     // 2. Combined with all installed apps for the selection screen
     val allApps: StateFlow<List<AppInfo>> = combine(_installedApps, appDao.getAllImportantApps()) { installed, important ->
-        val importantPackages = important.map { it.packageName }.toSet()
+        val importantMap = important.associateBy { it.packageName }
         installed
             .distinctBy { it.packageName }
-            .map { it.copy(isImportant = importantPackages.contains(it.packageName)) }
+            .map { app ->
+                val entity = importantMap[app.packageName]
+                app.copy(
+                    isImportant = entity != null,
+                    prompt = entity?.prompt,
+                    replyStyle = entity?.replyStyle ?: "Concise"
+                )
+            }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     // 3. Load installed launchable apps - strictly deduplicated by packageName
@@ -93,22 +104,40 @@ class AppViewModel @Inject constructor(
     fun toggleImportant(app: AppInfo) {
         viewModelScope.launch(Dispatchers.IO) {
             if (app.isImportant) {
-                appDao.deleteApp(AppEntity(app.packageName, app.appName))
+                appDao.deleteApp(AppEntity(app.packageName, app.appName, app.prompt, app.replyStyle))
             } else {
-                appDao.insertApp(AppEntity(app.packageName, app.appName))
+                appDao.insertApp(AppEntity(app.packageName, app.appName, app.prompt, app.replyStyle ?: "Concise"))
             }
+        }
+    }
+
+    fun updateAppPrompt(packageName: String, prompt: String?) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val clean = prompt?.trim()?.ifBlank { null }
+            appDao.updateAppPrompt(packageName, clean)
+        }
+    }
+
+    fun updateAppConfig(packageName: String, prompt: String?, replyStyle: String?) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val cleanPrompt = prompt?.trim()?.ifBlank { null }
+            val cleanStyle = replyStyle?.trim()?.ifBlank { null } ?: "Concise"
+            appDao.updateAppConfig(packageName, cleanPrompt, cleanStyle)
         }
     }
 
     fun saveSelectedApps(selectedPackages: Set<String>, allAppsList: List<AppInfo>) {
         viewModelScope.launch(Dispatchers.IO) {
             val appMap = allAppsList.associateBy { it.packageName }
+            val existingApps = appDao.getAllImportantApps().firstOrNull()?.associateBy { it.packageName } ?: emptyMap()
             val entities = selectedPackages
                 .filter { it.isNotBlank() }
                 .distinct()
                 .map { pkg ->
                     val name = appMap[pkg]?.appName ?: pkg
-                    AppEntity(packageName = pkg, appName = name)
+                    val existingPrompt = existingApps[pkg]?.prompt ?: appMap[pkg]?.prompt
+                    val existingReplyStyle = existingApps[pkg]?.replyStyle ?: appMap[pkg]?.replyStyle ?: "Concise"
+                    AppEntity(packageName = pkg, appName = name, prompt = existingPrompt, replyStyle = existingReplyStyle)
                 }.sortedBy { it.appName.lowercase() }
             appDao.replaceAllImportantApps(entities)
         }

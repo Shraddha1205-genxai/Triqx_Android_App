@@ -13,8 +13,11 @@ data class ConversationEntity(
     val packageName: String,                     // e.g. "com.whatsapp"
     val contactId: Int? = null,                  // Linked VIP Contact ID (null for non-VIPs/groups)
     val title: String,                           // Sender/Group display name
-    val specificIdentifier: String? = null,        // Email address or phone number
+    val senderIdentifier: String? = null,        // Email address or phone number of sender
+    val receiverIdentifier: String? = null,      // User's receiving account email or identifier (e.g. user@example.com)
     val messages: List<ChatMessage> = emptyList(), // Full conversation history
     val latestTimestamp: Long,                   // Timestamp of the latest message for sorting
-    val latestNotificationKey: String? = null    // Android notification slot key for live dismiss/reply
+    val latestNotificationKey: String? = null,   // Android notification slot key for live dismiss/reply
+    val customPrompt: String? = null,            // Conversation-specific AI prompt override
+    val replyCount: Int? = null                  // Conversation-specific number of replies override
 )

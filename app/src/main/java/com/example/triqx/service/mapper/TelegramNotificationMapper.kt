@@ -184,6 +184,8 @@ class TelegramNotificationMapper : NotificationMapper {
                 ?.takeIf { it.isNotBlank() }
                 ?: conversationTitle
 
+        val media = MediaExtractor.extractMedia(notification, rawJson)
+
         return ParsedNotification(
             conversationTitle = conversationTitle,
             individualSender = if (isFromYou) {
@@ -195,7 +197,9 @@ class TelegramNotificationMapper : NotificationMapper {
             bodyText = cleanBody,
             chatTag = chatTag.trim(),
             isGroup = isGroup,
-            isFromYou = isFromYou
+            isFromYou = isFromYou,
+            mediaUri = media?.uri,
+            mediaType = media?.type
         )
     }
 

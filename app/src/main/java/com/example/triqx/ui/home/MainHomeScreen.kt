@@ -6,6 +6,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.example.triqx.ui.theme.Dimens
 
 @Composable
 fun MainHomeScreen(
@@ -16,7 +17,9 @@ fun MainHomeScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(16.dp),
+            .statusBarsPadding()
+            .padding(top = Dimens.ScreenTopPadding)
+            .padding(horizontal = Dimens.SpacingStandard),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
@@ -25,7 +28,7 @@ fun MainHomeScreen(
             style = MaterialTheme.typography.headlineLarge
         )
         
-        Spacer(modifier = Modifier.height(32.dp))
+        Spacer(modifier = Modifier.height(12.dp))
         
         Button(
             onClick = onNavigateToPriorityContacts,
@@ -34,7 +37,7 @@ fun MainHomeScreen(
             Text(text = "Manage Priority Contacts")
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(12.dp))
 
         Button(
             onClick = onNavigateToImportantApps,
@@ -43,7 +46,7 @@ fun MainHomeScreen(
             Text(text = "Manage Important Apps")
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(12.dp))
 
         Button(
             onClick = onNavigateToNotificationHistory,

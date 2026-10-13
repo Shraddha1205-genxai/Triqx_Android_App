@@ -6,11 +6,13 @@ import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Contacts
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.outlined.Apps
 import androidx.compose.material.icons.outlined.BugReport
 import androidx.compose.material.icons.outlined.Contacts
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.ui.graphics.vector.ImageVector
 
 sealed class BottomNavItem(
@@ -24,6 +26,13 @@ sealed class BottomNavItem(
         title = "Home",
         selectedIcon = Icons.Filled.Home,
         unselectedIcon = Icons.Outlined.Home
+    )
+
+    object Filters : BottomNavItem(
+        route = "filters",
+        title = "Filters",
+        selectedIcon = Icons.Filled.Tune,
+        unselectedIcon = Icons.Outlined.Tune
     )
 
     object Contacts : BottomNavItem(
@@ -57,9 +66,9 @@ sealed class BottomNavItem(
     companion object {
         fun getItems(showDebug: Boolean = false): List<BottomNavItem> {
             return if (showDebug) {
-                listOf(Home, Contacts, Apps, Debug, Settings)
+                listOf(Home, Filters, Debug, Settings)
             } else {
-                listOf(Home, Contacts, Apps, Settings)
+                listOf(Home, Filters, Settings)
             }
         }
     }

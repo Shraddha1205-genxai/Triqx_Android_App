@@ -7,5 +7,7 @@ import androidx.room.PrimaryKey
 data class AppEntity(
     @PrimaryKey
     val packageName: String,
-    val appName: String
+    val appName: String,
+    val prompt: String? = null,
+    val replyStyle: String? = "Concise"
 )

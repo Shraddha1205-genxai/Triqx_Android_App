@@ -109,6 +109,9 @@ class WhatsAppNotificationMapper : NotificationMapper {
 
                 ?: extractOtherPersonName(notification, rawJson)
 
+                ?: title
+                    ?.takeIf { it.isNotBlank() && !it.equals("WhatsApp", ignoreCase = true) && !it.equals("You", ignoreCase = true) }
+
                 ?: sbn.packageName
         }
 
@@ -186,6 +189,8 @@ class WhatsAppNotificationMapper : NotificationMapper {
                 ?: extractTagFromKey(sbn.key)
                 ?: conversationTitle
 
+        val media = MediaExtractor.extractMedia(notification, rawJson)
+
         return ParsedNotification(
             conversationTitle = conversationTitle,
             individualSender = individualSender,
@@ -193,7 +198,9 @@ class WhatsAppNotificationMapper : NotificationMapper {
             bodyText = cleanBody,
             chatTag = chatTag.trim(),
             isGroup = isGroup,
-            isFromYou = isFromYou
+            isFromYou = isFromYou,
+            mediaUri = media?.uri,
+            mediaType = media?.type
         )
     }
 
@@ -321,6 +328,12 @@ class WhatsAppNotificationMapper : NotificationMapper {
         rawJson: String?
     ): String? {
 
+        val extras = notification.extras ?: Bundle.EMPTY
+        val selfDisplayName = extras
+            .getCharSequence("android.selfDisplayName")
+            ?.toString()
+            ?.trim()
+
         // --- Try AndroidX MessagingStyle first ---
 
         val messagingStyle = try {
@@ -334,8 +347,15 @@ class WhatsAppNotificationMapper : NotificationMapper {
             val otherPerson = messagingStyle.messages
                 .mapNotNull { it.person }
                 .firstOrNull { person ->
-                    !person.uri?.toString().isNullOrBlank() ||
-                        !person.key.isNullOrBlank()
+                    val name = person.name?.toString()?.trim()
+                    if (name.isNullOrBlank()) return@firstOrNull false
+
+                    val isYou = (name.equals("You", ignoreCase = true) ||
+                            (!selfDisplayName.isNullOrBlank() && name.equals(selfDisplayName, ignoreCase = true))) &&
+                            person.uri?.toString().isNullOrBlank() &&
+                            person.key.isNullOrBlank()
+
+                    !isYou
                 }
 
             val name = otherPerson?.name
@@ -350,13 +370,13 @@ class WhatsAppNotificationMapper : NotificationMapper {
 
         if (!rawJson.isNullOrBlank()) {
             try {
-                val extras = JsonParser
+                val jsonExtras = JsonParser
                     .parseString(rawJson)
                     .asJsonObject
                     .getAsJsonObject("extras")
                     ?: return null
 
-                val messages = extras
+                val messages = jsonExtras
                     .getAsJsonArray("android.messages")
                     ?: return null
 
@@ -364,6 +384,14 @@ class WhatsAppNotificationMapper : NotificationMapper {
                     val obj = msg.asJsonObject
                     val senderPerson = obj.getAsJsonObject("sender_person")
                         ?: continue
+
+                    val name = senderPerson
+                        .get("name")
+                        ?.takeIf { !it.isJsonNull }
+                        ?.asString
+                        ?.trim()
+
+                    if (name.isNullOrBlank()) continue
 
                     val uri = senderPerson
                         .get("uri")
@@ -377,16 +405,12 @@ class WhatsAppNotificationMapper : NotificationMapper {
                         ?.asString
                         ?.trim()
 
-                    if (!uri.isNullOrBlank() || !key.isNullOrBlank()) {
-                        val name = senderPerson
-                            .get("name")
-                            ?.takeIf { !it.isJsonNull }
-                            ?.asString
-                            ?.trim()
-                            ?.takeIf { it.isNotBlank() }
+                    val isYou = (name.equals("You", ignoreCase = true) ||
+                            (!selfDisplayName.isNullOrBlank() && name.equals(selfDisplayName, ignoreCase = true))) &&
+                            uri.isNullOrBlank() &&
+                            key.isNullOrBlank()
 
-                        if (name != null) return name
-                    }
+                    if (!isYou) return name
                 }
             } catch (_: Exception) {
                 // fall through
@@ -689,15 +713,7 @@ class WhatsAppNotificationMapper : NotificationMapper {
             return rawBody
         }
 
-        /*
-         * Example:
-         *
-         * Ashwini GenXAI: Hello
-         *
-         * becomes:
-         *
-         * Hello
-         */
+
 
         val prefix = "$senderName:"
 

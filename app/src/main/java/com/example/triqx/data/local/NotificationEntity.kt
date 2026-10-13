@@ -14,5 +14,7 @@ data class NotificationEntity(
     val contactLookupUri: String? = null,
     val rawJson: String? = null,
     val notificationKey: String,
-    val timestamp: Long
+    val timestamp: Long,
+    val mediaUri: String? = null,
+    val mediaType: String? = null
 )

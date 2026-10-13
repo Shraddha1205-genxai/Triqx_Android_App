@@ -59,6 +59,8 @@ class DefaultNotificationMapper : NotificationMapper {
             ?: extractTagFromKey(sbn.key)
             ?: conversationTitle
 
+        val media = MediaExtractor.extractMedia(sbn.notification, rawJson)
+
         return ParsedNotification(
             conversationTitle = conversationTitle,
             individualSender = if (isFromYou) "You" else individualSender,
@@ -66,7 +68,9 @@ class DefaultNotificationMapper : NotificationMapper {
             bodyText = text ?: bigText ?: "",
             chatTag = chatTag.trim(),
             isGroup = isGroup,
-            isFromYou = isFromYou
+            isFromYou = isFromYou,
+            mediaUri = media?.uri,
+            mediaType = media?.type
         )
     }
 
