@@ -29,6 +29,7 @@ import kotlin.coroutines.resumeWithException
 
 @Singleton
 class BackendAiService @Inject constructor(
+    private val okHttpClient: OkHttpClient,
     private val gson: Gson,
     private val sessionManager: UserSessionManager,
     private val otpAuthServiceProvider: Provider<OtpAuthService>
@@ -38,12 +39,6 @@ class BackendAiService @Inject constructor(
         private const val TAG = "BackendAiService"
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
     }
-
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
-        .writeTimeout(30, TimeUnit.SECONDS)
-        .build()
 
     /**
      * Sends conversation context to backend AI endpoint and returns generated reply suggestions.
@@ -114,7 +109,7 @@ class BackendAiService @Inject constructor(
             .post(requestJson.toRequestBody(JSON_MEDIA_TYPE))
 
         try {
-            client.executeCancellable(requestBuilder.build()).use { response ->
+            okHttpClient.executeCancellable(requestBuilder.build()).use { response ->
                 val responseBody = response.body?.string().orEmpty()
                 val logResponse = buildString {
                     appendLine("==================== [AI GENERATE REPLIES RESPONSE] ===================")

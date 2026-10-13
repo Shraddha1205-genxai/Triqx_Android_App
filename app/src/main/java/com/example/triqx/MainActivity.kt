@@ -49,7 +49,6 @@ import com.example.triqx.ui.apps.AppViewModel
 import com.example.triqx.ui.apps.ImportantAppsScreen
 import com.example.triqx.ui.contacts.ContactDetailsScreen
 import com.example.triqx.ui.contacts.ContactViewModel
-import com.example.triqx.ui.contacts.PriorityContactsScreen
 import com.example.triqx.ui.filters.PriorityFiltersScreen
 import com.example.triqx.ui.home.ChatScreen
 import com.example.triqx.ui.home.HomeScreen
@@ -84,6 +83,9 @@ class MainActivity : ComponentActivity() {
 
         // Create Assistant Notification Channel early
         TriqxAssistantNotificationManager.createNotificationChannel(this)
+
+        // Ensure Notification Listener Service is bound and connected
+        com.example.triqx.utils.NotificationListenerUtils.ensureServiceConnected(this)
 
         // Request POST_NOTIFICATIONS permission on Android 13+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -415,8 +417,14 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        com.example.triqx.utils.NotificationListenerUtils.ensureServiceConnected(this)
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        com.example.triqx.utils.NotificationListenerUtils.ensureServiceConnected(this)
         setIntent(intent)
         handleOAuthRedirect(intent)
         extractConversationKey(intent)?.let {

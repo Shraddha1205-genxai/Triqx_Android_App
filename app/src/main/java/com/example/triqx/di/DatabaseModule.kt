@@ -32,6 +32,13 @@ object DatabaseModule {
         }
     }
 
+    private val MIGRATION_12_13 = object : androidx.room.migration.Migration(12, 13) {
+        override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE notifications ADD COLUMN mediaUri TEXT DEFAULT NULL")
+            db.execSQL("ALTER TABLE notifications ADD COLUMN mediaType TEXT DEFAULT NULL")
+        }
+    }
+
     @Provides
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): AppDatabase {
@@ -40,7 +47,7 @@ object DatabaseModule {
             AppDatabase::class.java,
             "triqx_database"
         )
-        .addMigrations(MIGRATION_10_11, MIGRATION_11_12)
+        .addMigrations(MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13)
         .fallbackToDestructiveMigration()
         .build()
     }

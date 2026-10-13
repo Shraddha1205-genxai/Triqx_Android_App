@@ -21,7 +21,9 @@ data class ReplyMessageDto(
     @SerializedName("sender") val sender: String,
     @SerializedName("text") val text: String,
     @SerializedName("timestamp") val timestamp: Long,
-    @SerializedName("isFromUser") val isFromUser: Boolean
+    @SerializedName("isFromUser") val isFromUser: Boolean,
+    @SerializedName("mediaType") val mediaType: String? = null,
+    @SerializedName("mediaBase64") val mediaBase64: String? = null
 )
 
 /**

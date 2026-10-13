@@ -5,7 +5,6 @@ import android.util.Log
 import com.example.triqx.data.local.AppDao
 import com.example.triqx.data.local.ChatMessage
 import com.example.triqx.data.local.ConversationDao
-import com.example.triqx.data.local.NotificationEntity
 import com.example.triqx.data.remote.BackendAiService
 import com.example.triqx.data.remote.dto.ReplyMessageDto
 import com.example.triqx.data.remote.dto.SmartReplyRequest
@@ -180,52 +179,10 @@ class OpenAiRepository @Inject constructor(
     // =============================
 
     /**
-     * Generate replies in the background (non-blocking) for NotificationEntity list.
+     * Generate replies in the background (non-blocking) for ChatMessage list.
      * Skips if replies already exist for this exact message signature.
      * Cancels any prior in-flight request for the same conversation group.
      */
-    fun generateRepliesIfNeeded(
-        groupKey: String,
-        contactOrTitle: String,
-        messages: List<NotificationEntity>
-    ) {
-        if (messages.isEmpty()) return
-
-        val signature = messageSignature(messages)
-        val cached = _cache.value[groupKey]
-
-        // Skip if we already have replies for this exact message
-        if (cached != null && cached.messageSignature == signature) {
-            return
-        }
-
-        // Cancel any existing in-flight job for this group
-        activeJobsByGroup[groupKey]?.cancel()
-
-        val job = scope.launch {
-            setLoading(groupKey, true)
-            try {
-                val replies = callBackendForNotifications(groupKey, contactOrTitle, messages)
-                cacheReplies(groupKey, signature, replies)
-            } catch (e: CancellationException) {
-                Log.d(TAG, "Reply generation cancelled for group '$groupKey' due to newer incoming message")
-            } catch (e: Exception) {
-                Log.e(TAG, "Error generating replies from backend: ${e.message}")
-            } finally {
-                if (activeJobsByGroup[groupKey] == coroutineContext[Job]) {
-                    setLoading(groupKey, false)
-                    activeJobsByGroup.remove(groupKey)
-                }
-            }
-        }
-
-        activeJobsByGroup[groupKey] = job
-    }
-
-    /**
-     * ChatMessage overload for generateRepliesIfNeeded.
-     */
-    @JvmName("generateRepliesIfNeededForChat")
     fun generateRepliesIfNeeded(
         groupKey: String,
         contactOrTitle: String,
@@ -272,7 +229,6 @@ class OpenAiRepository @Inject constructor(
      * Generate replies synchronously (suspending) for ChatMessage list.
      * Used by the notification listener service for real-time assistant notifications.
      */
-    @JvmName("getOrGenerateRepliesForChat")
     suspend fun getOrGenerateReplies(
         groupKey: String,
         contactOrTitle: String,
@@ -304,73 +260,8 @@ class OpenAiRepository @Inject constructor(
     }
 
     /**
-     * Generate replies synchronously (blocking).
-     * Used by the notification listener service for real-time assistant notifications.
+     * Force-regenerate replies (ignores cache) for ChatMessage list.
      */
-    suspend fun getOrGenerateReplies(
-        groupKey: String,
-        contactOrTitle: String,
-        messages: List<NotificationEntity>
-    ): List<String> {
-        if (messages.isEmpty()) return emptyList()
-
-        val signature = messageSignature(messages)
-        val cached = _cache.value[groupKey]
-
-        if (cached != null && cached.messageSignature == signature && cached.replies.isNotEmpty()) {
-            return cached.replies
-        }
-
-        return try {
-            val replies = callBackendForNotifications(groupKey, contactOrTitle, messages)
-            cacheReplies(groupKey, signature, replies)
-            replies
-        } catch (e: CancellationException) {
-            Log.d(TAG, "getOrGenerateReplies cancelled for group '$groupKey'")
-            throw e
-        } catch (e: Exception) {
-            Log.e(TAG, "Error generating replies from backend: ${e.message}")
-            cached?.replies ?: getDefaultReplies(messages.firstOrNull { !it.isFromYou() }?.text)
-        }
-    }
-
-    /**
-     * Force-regenerate replies (ignores cache) for NotificationEntities.
-     */
-    fun regenerateReplies(
-        groupKey: String,
-        contactOrTitle: String,
-        messages: List<NotificationEntity>
-    ) {
-        if (messages.isEmpty()) return
-
-        val signature = messageSignature(messages)
-        activeJobsByGroup[groupKey]?.cancel()
-
-        val job = scope.launch {
-            setLoading(groupKey, true)
-            try {
-                val replies = callBackendForNotifications(groupKey, contactOrTitle, messages)
-                cacheReplies(groupKey, signature, replies)
-            } catch (e: CancellationException) {
-                Log.d(TAG, "Regenerate replies cancelled for group '$groupKey'")
-            } catch (e: Exception) {
-                Log.e(TAG, "Error generating replies from backend: ${e.message}")
-            } finally {
-                if (activeJobsByGroup[groupKey] == coroutineContext[Job]) {
-                    setLoading(groupKey, false)
-                    activeJobsByGroup.remove(groupKey)
-                }
-            }
-        }
-
-        activeJobsByGroup[groupKey] = job
-    }
-
-    /**
-     * ChatMessage overload for regenerateReplies.
-     */
-    @JvmName("regenerateRepliesForChat")
     fun regenerateReplies(
         groupKey: String,
         contactOrTitle: String,
@@ -434,63 +325,6 @@ class OpenAiRepository @Inject constructor(
     // Network Call Helpers
     // =============================
 
-    private suspend fun callBackendForNotifications(
-        groupKey: String,
-        contactOrTitle: String,
-        messages: List<NotificationEntity>
-    ): List<String> {
-        val appPackage = messages.firstOrNull()?.packageName
-            ?: extractPackageFromGroupKey(groupKey)
-
-        val dtoList = messages
-            .take(10)
-            .reversed()
-            .map { msg ->
-                val sender = if (msg.isFromYou()) {
-                    "You"
-                } else {
-                    msg.title ?: contactOrTitle
-                }
-                ReplyMessageDto(
-                    sender = sender,
-                    text = msg.text.orEmpty(),
-                    timestamp = msg.timestamp,
-                    isFromUser = msg.isFromYou()
-                )
-            }
-
-        val convEntity = conversationDao.findConversationByKey(groupKey)
-        val appSpecificPrompt = appDao.getPromptForApp(appPackage)
-        val appReplyStyle = appDao.getReplyStyleForApp(appPackage)
-
-        val resolvedPrompt = resolveMergedPrompt(
-            globalPrompt = _additionalPrompt.value,
-            appPrompt = appSpecificPrompt,
-            conversationPrompt = convEntity?.customPrompt
-        )
-
-        val resolvedReplyCount = convEntity?.replyCount ?: _defaultReplyCount.value
-        val resolvedReplyStyle = appReplyStyle?.ifBlank { null } ?: _replyStyle.value
-
-        val request = SmartReplyRequest(
-            appPackage = appPackage,
-            conversationTitle = contactOrTitle,
-            replyStyle = resolvedReplyStyle,
-            additionalPrompt = resolvedPrompt,
-            replyCount = resolvedReplyCount,
-            messages = dtoList
-        )
-
-        return try {
-            backendAiService.generateReplies(_backendBaseUrl.value, request)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            Log.w(TAG, "Backend call failed, using offline fallback: ${e.message}")
-            getDefaultReplies(messages.firstOrNull { !it.isFromYou() }?.text, resolvedReplyCount)
-        }
-    }
-
     private suspend fun callBackendForChat(
         groupKey: String,
         contactOrTitle: String,
@@ -513,7 +347,9 @@ class OpenAiRepository @Inject constructor(
                     sender = sender,
                     text = msg.bodyText,
                     timestamp = msg.timestamp,
-                    isFromUser = msg.isFromYou
+                    isFromUser = msg.isFromYou,
+                    mediaType = msg.mediaType,
+                    mediaBase64 = com.example.triqx.utils.ImageUtils.convertUriToBase64(context, msg.mediaUri)
                 )
             }
 
@@ -580,11 +416,6 @@ class OpenAiRepository @Inject constructor(
         }
     }
 
-    private fun NotificationEntity.isFromYou(): Boolean {
-        return title.equals("You", ignoreCase = true) ||
-                text?.startsWith("Replied you using", ignoreCase = true) == true
-    }
-
     private fun getDefaultReplies(latestText: String?, count: Int = 3): List<String> {
         val lower = latestText?.lowercase().orEmpty()
         val allReplies = when {
@@ -637,12 +468,6 @@ class OpenAiRepository @Inject constructor(
     // =============================
     // Signature & Cache Helpers
     // =============================
-
-    /** Creates a signature string for the latest message in a conversation (NotificationEntity). */
-    private fun messageSignature(messages: List<NotificationEntity>): String {
-        val latest = messages.first()
-        return "${latest.title?.trim()}|${latest.text?.trim()}|${latest.timestamp}"
-    }
 
     /** Creates a signature string for the latest ChatMessage in a conversation. */
     private fun chatMessageSignature(messages: List<ChatMessage>): String {

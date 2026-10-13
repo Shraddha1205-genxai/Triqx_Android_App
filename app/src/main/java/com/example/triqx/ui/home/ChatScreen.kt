@@ -22,6 +22,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Contacts
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Edit
@@ -81,6 +82,7 @@ fun ChatScreen(
     var showNotConnectedDialog by remember { mutableStateOf(false) }
     var showDetailsSheet by remember { mutableStateOf(false) }
     var pendingUnconnectedReplyText by remember { mutableStateOf("") }
+    var fullScreenImageUri by remember { mutableStateOf<String?>(null) }
 
     val listState = rememberLazyListState()
 
@@ -286,7 +288,8 @@ fun ChatScreen(
                         ) { message ->
                             GoogleMessageBubble(
                                 message = message,
-                                groupTitle = conversation.title
+                                groupTitle = conversation.title,
+                                onImageClick = { uri -> fullScreenImageUri = uri }
                             )
                         }
                     }
@@ -815,6 +818,14 @@ fun ChatScreen(
             }
         )
     }
+
+    // Full-Screen Image Viewer Dialog
+    if (fullScreenImageUri != null) {
+        FullScreenImageViewerDialog(
+            imageUri = fullScreenImageUri!!,
+            onDismiss = { fullScreenImageUri = null }
+        )
+    }
 }
 
 private fun sendReply(
@@ -875,37 +886,185 @@ private fun sendReply(
             groupKey = conversation.groupKey
         )
 
-        val dispatched = if (isEmailApp) {
-            val cleanEmail = EmailUtils.cleanEmail(conversation.senderIdentifier)?.removePrefix("mailto:")?.trim()
-            val titleStr = conversation.contact?.displayName ?: conversation.messages.firstOrNull()?.senderName ?: conversation.packageName
-            val subject = if (titleStr.startsWith("Re:", ignoreCase = true)) titleStr else "Re: $titleStr"
+        clipboardManager.setText(AnnotatedString(replyText))
+        val launchIntent = context.packageManager.getLaunchIntentForPackage(conversation.packageName)
+        if (launchIntent != null) {
+            Toast.makeText(context, "Copied reply! Opening app...", Toast.LENGTH_SHORT).show()
+            context.startActivity(launchIntent)
+        } else {
+            Toast.makeText(context, "Copied to clipboard", Toast.LENGTH_SHORT).show()
+        }
+    }
+}
 
-            val emailIntent = Intent(Intent.ACTION_SENDTO).apply {
-                data = Uri.parse("mailto:${cleanEmail ?: ""}")
-                if (!cleanEmail.isNullOrBlank()) putExtra(Intent.EXTRA_EMAIL, arrayOf(cleanEmail))
-                putExtra(Intent.EXTRA_SUBJECT, subject)
-                putExtra(Intent.EXTRA_TEXT, replyText)
-                setPackage(conversation.packageName)
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+@Composable
+fun GoogleMessageBubble(
+    message: ChatMessage,
+    groupTitle: String,
+    onImageClick: ((String) -> Unit)? = null
+) {
+    val timeFormat = remember { SimpleDateFormat("h:mm a", Locale.getDefault()) }
+    val formattedTime = remember(message.timestamp) {
+        timeFormat.format(Date(message.timestamp))
+    }
+    val isFromYou = message.isFromYou
+    val isGroupMember = !isFromYou && message.senderName.isNotBlank() &&
+                        !message.senderName.equals(groupTitle, ignoreCase = true) &&
+                        !message.senderName.equals("You", ignoreCase = true)
+
+    val bubbleShape = if (isFromYou) {
+        RoundedCornerShape(topStart = 16.dp, topEnd = 4.dp, bottomEnd = 16.dp, bottomStart = 16.dp)
+    } else {
+        RoundedCornerShape(topStart = 4.dp, topEnd = 16.dp, bottomEnd = 16.dp, bottomStart = 16.dp)
+    }
+
+    val bubbleColor = if (isFromYou) {
+        MaterialTheme.colorScheme.primaryContainer
+    } else {
+        MaterialTheme.colorScheme.surfaceContainerHigh
+    }
+
+    val textColor = if (isFromYou) {
+        MaterialTheme.colorScheme.onPrimaryContainer
+    } else {
+        MaterialTheme.colorScheme.onSurface
+    }
+
+    val subTextColor = if (isFromYou) {
+        MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+    } else {
+        MaterialTheme.colorScheme.outline
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp),
+        horizontalAlignment = if (isFromYou) Alignment.End else Alignment.Start
+    ) {
+        Surface(
+            shape = bubbleShape,
+            color = bubbleColor,
+            modifier = Modifier.widthIn(max = 300.dp)
+        ) {
+            Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                if (isFromYou) {
+                    Text(
+                        text = "You",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(bottom = 2.dp)
+                    )
+                } else if (isGroupMember) {
+                    Text(
+                        text = message.senderName,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.85f),
+                        modifier = Modifier.padding(bottom = 2.dp)
+                    )
+                }
+
+                if (!message.subText.isNullOrBlank()) {
+                    val subjectDisplay = message.subText.removePrefix("Subject:").trim()
+                    Text(
+                        text = subjectDisplay,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = if (isFromYou) {
+                            MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.9f)
+                        } else {
+                            MaterialTheme.colorScheme.primary
+                        },
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(bottom = 3.dp)
+                    )
+                }
+
+                if (!message.mediaUri.isNullOrBlank()) {
+                    coil.compose.AsyncImage(
+                        model = message.mediaUri,
+                        contentDescription = "Media attachment",
+                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 220.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .padding(bottom = 6.dp)
+                            .clickable {
+                                onImageClick?.invoke(message.mediaUri)
+                            }
+                    )
+                }
+
+                Text(
+                    text = message.bodyText.ifEmpty { "No Content" },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = textColor
+                )
+
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.End)
+                        .padding(top = 3.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = formattedTime,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = subTextColor
+                    )
+                }
             }
+        }
+    }
+}
 
-            val sent = try { context.startActivity(emailIntent); true } catch (_: Exception) { false }
-            if (!sent) {
-                try { emailIntent.setPackage(null); context.startActivity(emailIntent); true } catch (_: Exception) { false }
-            } else {
-                Toast.makeText(context, "Opening email draft...", Toast.LENGTH_SHORT).show()
-                true
-            }
-        } else false
+@Composable
+fun FullScreenImageViewerDialog(
+    imageUri: String,
+    onDismiss: () -> Unit
+) {
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = onDismiss,
+        properties = androidx.compose.ui.window.DialogProperties(
+            usePlatformDefaultWidth = false,
+            dismissOnBackPress = true,
+            dismissOnClickOutside = true
+        )
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black)
+                .clickable(onClick = onDismiss),
+            contentAlignment = Alignment.Center
+        ) {
+            coil.compose.AsyncImage(
+                model = imageUri,
+                contentDescription = "Full Screen Image",
+                contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(16.dp)
+            )
 
-        if (!dispatched) {
-            clipboardManager.setText(AnnotatedString(replyText))
-            val launchIntent = context.packageManager.getLaunchIntentForPackage(conversation.packageName)
-            if (launchIntent != null) {
-                Toast.makeText(context, "Copied reply! Opening app...", Toast.LENGTH_SHORT).show()
-                context.startActivity(launchIntent)
-            } else {
-                Toast.makeText(context, "Copied to clipboard", Toast.LENGTH_SHORT).show()
+            IconButton(
+                onClick = onDismiss,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .statusBarsPadding()
+                    .padding(16.dp)
+                    .size(40.dp)
+                    .background(Color.Black.copy(alpha = 0.5f), CircleShape)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Close,
+                    contentDescription = "Close",
+                    tint = Color.White
+                )
             }
         }
     }

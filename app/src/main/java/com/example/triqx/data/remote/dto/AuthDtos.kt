@@ -52,6 +52,7 @@ data class UserDto(
 data class VerifyOtpData(
     @SerializedName("user") val user: UserDto? = null,
     @SerializedName("accessToken") val accessToken: String? = null,
+    @SerializedName("token") val token: String? = null,
     @SerializedName("refreshToken") val refreshToken: String? = null
 )
 

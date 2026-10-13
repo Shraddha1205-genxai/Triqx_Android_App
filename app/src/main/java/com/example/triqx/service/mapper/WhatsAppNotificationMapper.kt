@@ -189,6 +189,8 @@ class WhatsAppNotificationMapper : NotificationMapper {
                 ?: extractTagFromKey(sbn.key)
                 ?: conversationTitle
 
+        val media = MediaExtractor.extractMedia(notification, rawJson)
+
         return ParsedNotification(
             conversationTitle = conversationTitle,
             individualSender = individualSender,
@@ -196,7 +198,9 @@ class WhatsAppNotificationMapper : NotificationMapper {
             bodyText = cleanBody,
             chatTag = chatTag.trim(),
             isGroup = isGroup,
-            isFromYou = isFromYou
+            isFromYou = isFromYou,
+            mediaUri = media?.uri,
+            mediaType = media?.type
         )
     }
 

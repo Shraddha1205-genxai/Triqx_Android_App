@@ -498,8 +498,11 @@ class NotificationViewModel @Inject constructor(
     // =============================
 
     fun isNotificationServiceEnabled(): Boolean {
-        val flat = Settings.Secure.getString(context.contentResolver, "enabled_notification_listeners")
-        return flat != null && flat.contains(context.packageName)
+        val isGrantedInSettings = com.example.triqx.utils.NotificationListenerUtils.isPermissionGranted(context)
+        if (isGrantedInSettings) {
+            com.example.triqx.utils.NotificationListenerUtils.ensureServiceConnected(context)
+        }
+        return isGrantedInSettings && com.example.triqx.utils.NotificationListenerUtils.isServiceRunning()
     }
 
     // =============================

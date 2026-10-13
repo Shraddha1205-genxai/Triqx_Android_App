@@ -52,6 +52,7 @@ class TriqxNotificationListenerService : NotificationListenerService() {
     @Inject lateinit var replyActionStore: ReplyActionStore
     @Inject lateinit var emailAccountStore: com.example.triqx.data.local.EmailAccountStore
     @Inject lateinit var mapperRegistry: com.example.triqx.service.mapper.NotificationMapperRegistry
+    @Inject lateinit var userSessionManager: com.example.triqx.data.local.UserSessionManager
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val gson = GsonBuilder()
@@ -81,6 +82,10 @@ class TriqxNotificationListenerService : NotificationListenerService() {
         Log.i(TAG, "Notification Listener Connected! Indexing active notifications...")
 
         serviceScope.launch {
+            if (!userSessionManager.isLoggedIn.value) {
+                Log.d(TAG, "User is logged out. Skipping active notification indexing.")
+                return@launch
+            }
             try {
                 val priorityContacts = contactDao.getAllContacts().first()
                 activeNotifications?.forEach { sbn ->
@@ -119,6 +124,7 @@ class TriqxNotificationListenerService : NotificationListenerService() {
      * Determines if a given conversation has an available reply action.
      */
     fun canReply(conversationKey: String, notificationKey: String? = null): Boolean {
+        if (!userSessionManager.isLoggedIn.value) return false
         if (isEmailApp(conversationKey) && (emailAccountStore.isGmailConnected() || emailAccountStore.isOutlookConnected())) return true
         if (replyActionStore.canReply(conversationKey)) return true
         if (notificationKey != null && activeNotifications?.any { it.key == notificationKey && hasReplyAction(it.notification) } == true) return true
@@ -133,6 +139,10 @@ class TriqxNotificationListenerService : NotificationListenerService() {
         message: String,
         notificationKey: String? = null
     ): Boolean {
+        if (!userSessionManager.isLoggedIn.value) {
+            Log.w(TAG, "User is logged out. Aborting reply dispatch.")
+            return false
+        }
         Log.i(TAG, "===> Attempting to send reply: \"$message\" for key='$conversationKey'")
 
         // 1. Retrieve action from unified store (checks RAM first, then Disk)
@@ -255,11 +265,21 @@ class TriqxNotificationListenerService : NotificationListenerService() {
     // =============================
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
+        if (!userSessionManager.isLoggedIn.value) {
+            Log.d(TAG, "User is logged out. Ignoring incoming notification.")
+            return
+        }
+        if (sbn.packageName == applicationContext.packageName) return
         if (sbn.notification.flags and Notification.FLAG_GROUP_SUMMARY != 0) return
 
         val notification = sbn.notification
         val packageName = sbn.packageName
         val extras = notification.extras
+
+        // Ignore progress bar notifications (file uploads, downloads, backups)
+        val progressMax = extras.getInt(Notification.EXTRA_PROGRESS_MAX, 0)
+        val isIndeterminate = extras.getBoolean(Notification.EXTRA_PROGRESS_INDETERMINATE, false)
+        if (progressMax > 0 || isIndeterminate) return
         val title = extras.getString(Notification.EXTRA_CONVERSATION_TITLE)
             ?: extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim()
             ?: extras.getCharSequence("android.title.big")?.toString()?.trim()
@@ -410,6 +430,11 @@ class TriqxNotificationListenerService : NotificationListenerService() {
                 ?: (EmailUtils.cleanEmail(senderEmail)?.takeIf { cleanReceiver == null || !it.equals(cleanReceiver, ignoreCase = true) })
                 ?: matchedContact?.primaryEmail
 
+            val persistentMediaUri = com.example.triqx.utils.LocalMediaCache.cacheMediaToFile(
+                context = applicationContext,
+                sourceUriString = parsed.mediaUri
+            )
+
             // --- 2. RECORD CLEAN NOTIFICATION IN NotificationDao (FOR DEBUG TAB & HISTORY) ---
             val existing = notificationDao.getLatestMatching(packageName, senderName, parsed.bodyText)
             if (existing != null && (timestamp - existing.timestamp < 60 * 60 * 1000L || existing.notificationKey == sbn.key)) {
@@ -424,7 +449,9 @@ class TriqxNotificationListenerService : NotificationListenerService() {
                         contactLookupUri = contactLookupUri,
                         rawJson = rawJson,
                         notificationKey = sbn.key,
-                        timestamp = timestamp
+                        timestamp = timestamp,
+                        mediaUri = persistentMediaUri,
+                        mediaType = parsed.mediaType
                     )
                 )
             }
@@ -449,7 +476,9 @@ class TriqxNotificationListenerService : NotificationListenerService() {
                     subText = cleanSubText,
                     bodyText = parsed.bodyText,
                     timestamp = timestamp,
-                    isFromYou = isFromYou
+                    isFromYou = isFromYou,
+                    mediaUri = persistentMediaUri,
+                    mediaType = parsed.mediaType
                 )
 
                 val updatedMessages = ((currentConversation?.messages ?: emptyList()) + newChatMessage)

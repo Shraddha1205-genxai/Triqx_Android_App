@@ -60,6 +60,8 @@ class SlackNotificationMapper : NotificationMapper {
             ?: conversationTitleExtra
             ?: (title ?: sbn.packageName)
 
+        val media = MediaExtractor.extractMedia(sbn.notification, rawJson)
+
         return ParsedNotification(
             conversationTitle = conversationTitle,
             individualSender = if (isFromYou) "You" else individualSender,
@@ -67,7 +69,9 @@ class SlackNotificationMapper : NotificationMapper {
             bodyText = text ?: bigText ?: "",
             chatTag = chatTag.trim(),
             isGroup = isChannel,
-            isFromYou = isFromYou || individualSender.equals("You", ignoreCase = true)
+            isFromYou = isFromYou || individualSender.equals("You", ignoreCase = true),
+            mediaUri = media?.uri,
+            mediaType = media?.type
         )
     }
 }

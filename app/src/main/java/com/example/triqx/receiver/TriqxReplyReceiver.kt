@@ -60,10 +60,17 @@ class TriqxReplyReceiver : BroadcastReceiver() {
     @Inject lateinit var contactDao: ContactDao
     @Inject lateinit var emailReplyDispatcher: com.example.triqx.service.EmailReplyDispatcher
     @Inject lateinit var emailAccountStore: com.example.triqx.data.local.EmailAccountStore
+    @Inject lateinit var userSessionManager: com.example.triqx.data.local.UserSessionManager
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     override fun onReceive(context: Context, intent: Intent) {
+        if (!userSessionManager.isLoggedIn.value) {
+            Log.w(TAG, "User is logged out. Aborting reply execution.")
+            TriqxAssistantNotificationManager.cancelAllAssistantNotifications(context)
+            return
+        }
+
         val groupKey = intent.getStringExtra(EXTRA_GROUP_KEY) ?: return
         val packageName = intent.getStringExtra(EXTRA_PACKAGE_NAME) ?: "com.triqx"
         val notificationKey = intent.getStringExtra(EXTRA_NOTIFICATION_KEY) ?: ""

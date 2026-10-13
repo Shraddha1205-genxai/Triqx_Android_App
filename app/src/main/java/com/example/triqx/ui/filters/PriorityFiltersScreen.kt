@@ -4,7 +4,6 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.net.Uri
-import android.provider.ContactsContract
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
@@ -40,6 +39,7 @@ import com.example.triqx.ui.components.M3ExpressivePillTabSwitcher
 import com.example.triqx.ui.contacts.AddEditContactDialog
 import com.example.triqx.ui.contacts.ContactViewModel
 import com.example.triqx.ui.contacts.GoogleContactCard
+import com.example.triqx.ui.contacts.fetchContactDetails
 import com.example.triqx.ui.theme.Dimens
 
 enum class FilterTab(val title: String) {
@@ -81,61 +81,17 @@ fun PriorityFiltersScreen(
     val contactPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickContact()
     ) { uri: Uri? ->
-        if (uri != null) {
-            val cr = context.contentResolver
-            val cursor = cr.query(uri, null, null, null, null)
-            cursor?.use {
-                if (it.moveToFirst()) {
-                    val idIndex = it.getColumnIndex(ContactsContract.Contacts._ID)
-                    val nameIndex = it.getColumnIndex(ContactsContract.Contacts.DISPLAY_NAME)
-                    val keyIndex = it.getColumnIndex(ContactsContract.Contacts.LOOKUP_KEY)
-                    val id = if (idIndex >= 0) it.getString(idIndex) else null
-                    val name = if (nameIndex >= 0) it.getString(nameIndex) else "Unknown"
-                    val key = if (keyIndex >= 0) it.getString(keyIndex) else null
-
-                    val phoneList = mutableListOf<String>()
-                    if (id != null) {
-                        val pCur = cr.query(
-                            ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
-                            null,
-                            ContactsContract.CommonDataKinds.Phone.CONTACT_ID + " = ?",
-                            arrayOf(id),
-                            null
-                        )
-                        pCur?.use { pc ->
-                            val pIdx = pc.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
-                            while (pc.moveToNext()) {
-                                if (pIdx >= 0) phoneList.add(pc.getString(pIdx))
-                            }
-                        }
-                    }
-
-                    val emailList = mutableListOf<String>()
-                    if (id != null) {
-                        val eCur = cr.query(
-                            ContactsContract.CommonDataKinds.Email.CONTENT_URI,
-                            null,
-                            ContactsContract.CommonDataKinds.Email.CONTACT_ID + " = ?",
-                            arrayOf(id),
-                            null
-                        )
-                        eCur?.use { ec ->
-                            val eIdx = ec.getColumnIndex(ContactsContract.CommonDataKinds.Email.ADDRESS)
-                            while (ec.moveToNext()) {
-                                if (eIdx >= 0) emailList.add(ec.getString(eIdx))
-                            }
-                        }
-                    }
-
-                    contactViewModel.addContact(
-                        displayName = name,
-                        officialName = null,
-                        phoneNumbers = phoneList,
-                        emails = emailList,
-                        about = null,
-                        lookupKey = key
-                    )
-                }
+        uri?.let {
+            val contactData = fetchContactDetails(context, it)
+            contactData?.let { (name, phoneList, emailList, key) ->
+                contactViewModel.addContact(
+                    displayName = name,
+                    officialName = null,
+                    phoneNumbers = phoneList,
+                    emails = emailList,
+                    about = null,
+                    lookupKey = key
+                )
             }
         }
     }

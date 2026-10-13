@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.provider.Settings
 import android.widget.Toast
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -31,6 +32,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
@@ -43,7 +45,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.example.triqx.data.local.ChatMessage
 import com.example.triqx.ui.components.AppIcon
 import com.example.triqx.ui.components.ProfileAvatarBadge
 import com.example.triqx.ui.components.TriqxSearchBar
@@ -763,110 +764,3 @@ fun WhatsAppConversationCard(
     }
 }
 
-@Composable
-fun GoogleMessageBubble(
-    message: ChatMessage,
-    groupTitle: String
-) {
-    val timeFormat = remember { SimpleDateFormat("h:mm a", Locale.getDefault()) }
-    val formattedTime = remember(message.timestamp) {
-        timeFormat.format(Date(message.timestamp))
-    }
-    val isFromYou = message.isFromYou
-    val isGroupMember = !isFromYou && message.senderName.isNotBlank() &&
-                        !message.senderName.equals(groupTitle, ignoreCase = true) &&
-                        !message.senderName.equals("You", ignoreCase = true)
-
-    val bubbleShape = if (isFromYou) {
-        RoundedCornerShape(topStart = 16.dp, topEnd = 4.dp, bottomEnd = 16.dp, bottomStart = 16.dp)
-    } else {
-        RoundedCornerShape(topStart = 4.dp, topEnd = 16.dp, bottomEnd = 16.dp, bottomStart = 16.dp)
-    }
-
-    val bubbleColor = if (isFromYou) {
-        MaterialTheme.colorScheme.primaryContainer
-    } else {
-        MaterialTheme.colorScheme.surfaceContainerHigh
-    }
-
-    val textColor = if (isFromYou) {
-        MaterialTheme.colorScheme.onPrimaryContainer
-    } else {
-        MaterialTheme.colorScheme.onSurface
-    }
-
-    val subTextColor = if (isFromYou) {
-        MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
-    } else {
-        MaterialTheme.colorScheme.outline
-    }
-
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 2.dp),
-        horizontalAlignment = if (isFromYou) Alignment.End else Alignment.Start
-    ) {
-        Surface(
-            shape = bubbleShape,
-            color = bubbleColor,
-            modifier = Modifier.widthIn(max = 300.dp)
-        ) {
-            Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
-                if (isFromYou) {
-                    Text(
-                        text = "You",
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.padding(bottom = 2.dp)
-                    )
-                } else if (isGroupMember) {
-                    Text(
-                        text = message.senderName,
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.85f),
-                        modifier = Modifier.padding(bottom = 2.dp)
-                    )
-                }
-
-                if (!message.subText.isNullOrBlank()) {
-                    val subjectDisplay = message.subText.removePrefix("Subject:").trim()
-                    Text(
-                        text = subjectDisplay,
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = if (isFromYou) {
-                            MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.9f)
-                        } else {
-                            MaterialTheme.colorScheme.primary
-                        },
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.padding(bottom = 3.dp)
-                    )
-                }
-
-                Text(
-                    text = message.bodyText.ifEmpty { "No Content" },
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = textColor
-                )
-
-                Row(
-                    modifier = Modifier
-                        .align(Alignment.End)
-                        .padding(top = 3.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = formattedTime,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = subTextColor
-                    )
-                }
-            }
-        }
-    }
-}

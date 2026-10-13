@@ -25,8 +25,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.triqx.data.local.EmailAccountEntity
@@ -49,8 +47,6 @@ fun SettingsScreen(
     var showLogoutConfirmDialog by remember { mutableStateOf(false) }
     var managingAccount by remember { mutableStateOf<EmailAccountEntity?>(null) }
 
-    val savedApiKey by viewModel.apiKey.collectAsState()
-    val savedModel by viewModel.selectedModel.collectAsState()
     val defaultReplyCount by viewModel.defaultReplyCount.collectAsState()
     val isTesting by viewModel.isTesting.collectAsState()
     val testResult by viewModel.testResult.collectAsState()
@@ -80,15 +76,6 @@ fun SettingsScreen(
             viewModel.handleOutlookAuthResult(data)
         }
     }
-
-    var replyCountSelection by remember(defaultReplyCount) { mutableIntStateOf(defaultReplyCount) }
-
-    var apiKeyInput by remember(savedApiKey) { mutableStateOf(savedApiKey) }
-    var passwordVisible by remember { mutableStateOf(false) }
-    var expandedModelMenu by remember { mutableStateOf(false) }
-    var senderNameInput by remember { mutableStateOf("") }
-
-    val availableModels = listOf("gpt-4o-mini", "gpt-4o", "gpt-3.5-turbo")
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -198,10 +185,7 @@ fun SettingsScreen(
                 Column(verticalArrangement = Arrangement.spacedBy(Dimens.SpacingSmall)) {
                     MinimalSectionTitle("AI Model & Key")
                     TriqxCard(
-                        onClick = {
-                            apiKeyInput = savedApiKey
-                            showAiConfigDialog = true
-                        },
+                        onClick = { showAiConfigDialog = true },
                         contentPadding = PaddingValues(horizontal = Dimens.SpacingStandard, vertical = Dimens.SpacingMedium)
                     ) {
                         Row(
@@ -297,10 +281,7 @@ fun SettingsScreen(
                                         providerName = "Gmail",
                                         iconColor = MaterialTheme.colorScheme.tertiaryContainer,
                                         iconTint = MaterialTheme.colorScheme.onTertiaryContainer,
-                                        onClick = {
-                                            managingAccount = account
-                                            senderNameInput = account.displayName.orEmpty()
-                                        }
+                                        onClick = { managingAccount = account }
                                     )
                                 }
                                 AddAnotherAccountButton(
@@ -363,10 +344,7 @@ fun SettingsScreen(
                                         providerName = "Outlook",
                                         iconColor = MaterialTheme.colorScheme.secondaryContainer,
                                         iconTint = MaterialTheme.colorScheme.onSecondaryContainer,
-                                        onClick = {
-                                            managingAccount = account
-                                            senderNameInput = account.displayName.orEmpty()
-                                        }
+                                        onClick = { managingAccount = account }
                                     )
                                 }
                                 AddAnotherAccountButton(
@@ -586,200 +564,32 @@ fun SettingsScreen(
 
     // AI Configuration Dialog (Backend Service)
     if (showAiConfigDialog) {
-        AlertDialog(
-            onDismissRequest = { showAiConfigDialog = false },
-            shape = Dimens.DialogShape,
-            title = {
-                Text(
-                    text = "AI Smart Reply Configuration",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
+        AiSmartReplyConfigDialog(
+            defaultReplyCount = defaultReplyCount,
+            isTesting = isTesting,
+            testResult = testResult,
+            onTestConnection = { viewModel.testBackendConnection() },
+            onSaveReplyCount = { count ->
+                viewModel.saveDefaultReplyCount(count)
+                showAiConfigDialog = false
             },
-            text = {
-                Column(
-                    verticalArrangement = Arrangement.spacedBy(Dimens.SpacingMedium),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(
-                        text = "Configure the global default smart replies generated by the AI backend service.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-
-                    // Default Number of Replies
-                    Column(verticalArrangement = Arrangement.spacedBy(Dimens.SpacingSmall)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "Default Number of Replies",
-                                style = MaterialTheme.typography.labelLarge,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                            Text(
-                                text = "$replyCountSelection ${if (replyCountSelection == 1) "reply" else "replies"}",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.primary,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            (1..5).forEach { count ->
-                                FilterChip(
-                                    selected = replyCountSelection == count,
-                                    onClick = { replyCountSelection = count },
-                                    label = {
-                                        Text(
-                                            text = "$count",
-                                            fontWeight = if (replyCountSelection == count) FontWeight.Bold else FontWeight.Normal,
-                                            modifier = Modifier.fillMaxWidth(),
-                                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                                        )
-                                    },
-                                    modifier = Modifier.weight(1f)
-                                )
-                            }
-                        }
-                    }
-
-                    OutlinedButton(
-                        onClick = { viewModel.testBackendConnection() },
-                        enabled = !isTesting,
-                        shape = Dimens.SquircleShape,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        if (isTesting) {
-                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                            Spacer(modifier = Modifier.width(Dimens.SpacingSmall))
-                            Text("Testing AI Service...")
-                        } else {
-                            Text("Test AI Connection", fontWeight = FontWeight.SemiBold)
-                        }
-                    }
-
-                    if (testResult != null) {
-                        Surface(
-                            shape = Dimens.CardShape,
-                            color = if (testResult?.startsWith("Error") == true) {
-                                MaterialTheme.colorScheme.errorContainer
-                            } else {
-                                MaterialTheme.colorScheme.primaryContainer
-                            },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(
-                                text = testResult ?: "",
-                                style = MaterialTheme.typography.bodySmall,
-                                fontWeight = FontWeight.Medium,
-                                color = if (testResult?.startsWith("Error") == true) {
-                                    MaterialTheme.colorScheme.onErrorContainer
-                                } else {
-                                    MaterialTheme.colorScheme.onPrimaryContainer
-                                },
-                                modifier = Modifier.padding(Dimens.SpacingSmall)
-                            )
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        viewModel.saveDefaultReplyCount(replyCountSelection)
-                        showAiConfigDialog = false
-                    },
-                    shape = Dimens.SquircleShape
-                ) {
-                    Text("Save", fontWeight = FontWeight.SemiBold)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showAiConfigDialog = false }) {
-                    Text("Cancel")
-                }
-            }
+            onDismiss = { showAiConfigDialog = false }
         )
     }
 
     // Manage Connected Email Account Dialog
-    if (managingAccount != null) {
-        val account = managingAccount!!
-        AlertDialog(
-            onDismissRequest = { managingAccount = null },
-            shape = Dimens.DialogShape,
-            title = {
-                Text(
-                    text = "Manage Account",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
+    managingAccount?.let { account ->
+        ManageEmailAccountDialog(
+            account = account,
+            onSaveDisplayName = { name ->
+                viewModel.updateDisplayName(account.emailAddress, name)
+                managingAccount = null
             },
-            text = {
-                Column(
-                    verticalArrangement = Arrangement.spacedBy(Dimens.SpacingMedium),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(
-                        text = account.emailAddress,
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-
-                    OutlinedTextField(
-                        value = senderNameInput,
-                        onValueChange = { senderNameInput = it },
-                        label = { Text("Sender Name") },
-                        placeholder = { Text("Name shown on replies") },
-                        singleLine = true,
-                        shape = Dimens.InputShape,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-
-                    Spacer(modifier = Modifier.height(Dimens.SpacingMicro))
-
-                    TextButton(
-                        onClick = {
-                            val emailToDisconnect = account.emailAddress
-                            viewModel.disconnectAccount(emailToDisconnect)
-                            managingAccount = null
-                        },
-                        colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
-                        modifier = Modifier.align(Alignment.Start)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.DeleteOutline,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(Dimens.SpacingSmall))
-                        Text("Disconnect Account", fontWeight = FontWeight.SemiBold)
-                    }
-                }
+            onDisconnect = {
+                viewModel.disconnectAccount(account.emailAddress)
+                managingAccount = null
             },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        viewModel.updateDisplayName(account.emailAddress, senderNameInput.trim())
-                        managingAccount = null
-                    },
-                    shape = Dimens.SquircleShape
-                ) {
-                    Text("Save")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { managingAccount = null }) {
-                    Text("Cancel")
-                }
-            }
+            onDismiss = { managingAccount = null }
         )
     }
 
@@ -797,34 +607,13 @@ fun SettingsScreen(
 
     // Sign Out Confirmation Dialog
     if (showLogoutConfirmDialog) {
-        AlertDialog(
-            onDismissRequest = { showLogoutConfirmDialog = false },
-            shape = Dimens.DialogShape,
-            title = { Text("Sign Out", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) },
-            text = {
-                Text(
-                    "Are you sure you want to sign out? All your local data (messages, contacts, accounts, and AI cache) will be removed from this device. App permissions will remain granted.",
-                    style = MaterialTheme.typography.bodyMedium
-                )
+        SignOutConfirmDialog(
+            onConfirm = {
+                showLogoutConfirmDialog = false
+                viewModel.logout()
+                onLogout()
             },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        showLogoutConfirmDialog = false
-                        viewModel.logout()
-                        onLogout()
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
-                    shape = Dimens.SquircleShape
-                ) {
-                    Text("Sign Out")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showLogoutConfirmDialog = false }) {
-                    Text("Cancel")
-                }
-            }
+            onDismiss = { showLogoutConfirmDialog = false }
         )
     }
 }

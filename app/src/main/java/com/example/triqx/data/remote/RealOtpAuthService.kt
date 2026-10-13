@@ -107,7 +107,7 @@ class RealOtpAuthService @Inject constructor(
                     mobileNumber = cleanNumber,
                     isFirstLogin = true
                 )
-                val accessToken = data.accessToken.orEmpty()
+                val accessToken = data.accessToken ?: data.token.orEmpty()
                 val refreshToken = data.refreshToken.orEmpty()
 
                 Result.success(

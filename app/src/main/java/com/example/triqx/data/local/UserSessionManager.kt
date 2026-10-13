@@ -7,6 +7,7 @@ import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import com.example.triqx.data.remote.InvalidRefreshTokenException
 import com.example.triqx.data.remote.OtpAuthService
+import com.example.triqx.service.TriqxAssistantNotificationManager
 import com.google.gson.Gson
 import com.google.gson.JsonParser
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -15,12 +16,14 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import java.util.Base64
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
  * Secure persistent store for user session and profile data.
- * Uses EncryptedSharedPreferences (AES256_GCM via Android Keystore).
+ * Keeps core session state (`is_logged_in`, `user_profile`) in standard SharedPreferences
+ * so the app never logs out on device reboot, while keeping OAuth tokens securely encrypted.
  */
 @Singleton
 class UserSessionManager @Inject constructor(
@@ -30,7 +33,8 @@ class UserSessionManager @Inject constructor(
 
     companion object {
         private const val TAG = "UserSessionManager"
-        private const val PREFS_FILE = "triqx_secure_session_prefs"
+        private const val STANDARD_PREFS_FILE = "triqx_session_prefs"
+        private const val ENCRYPTED_PREFS_FILE = "triqx_secure_session_prefs"
 
         private const val KEY_IS_LOGGED_IN = "is_logged_in"
         private const val KEY_AUTH_TOKEN = "auth_token"
@@ -39,35 +43,69 @@ class UserSessionManager @Inject constructor(
         private const val KEY_USER_PROFILE_JSON = "user_profile_json"
     }
 
-    private val prefs: SharedPreferences = createSecurePreferences(context)
+    private val standardPrefs: SharedPreferences = context.getSharedPreferences(STANDARD_PREFS_FILE, Context.MODE_PRIVATE)
 
-    private val _isLoggedIn = MutableStateFlow(prefs.getBoolean(KEY_IS_LOGGED_IN, false))
+    init {
+        migrateLegacySession()
+    }
+
+    private val _isLoggedIn = MutableStateFlow(standardPrefs.getBoolean(KEY_IS_LOGGED_IN, false))
     val isLoggedIn: StateFlow<Boolean> = _isLoggedIn.asStateFlow()
 
     private val _userProfile = MutableStateFlow<UserProfile?>(loadProfile())
     val userProfile: StateFlow<UserProfile?> = _userProfile.asStateFlow()
 
-    private fun createSecurePreferences(ctx: Context): SharedPreferences {
+    /**
+     * Attempts to create/access EncryptedSharedPreferences safely.
+     * Returns null if Android Keystore is temporarily locked (e.g. before initial device unlock).
+     */
+    private fun getEncryptedPrefs(): SharedPreferences? {
         return try {
-            val masterKey = MasterKey.Builder(ctx)
+            val masterKey = MasterKey.Builder(context)
                 .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
                 .build()
             EncryptedSharedPreferences.create(
-                ctx,
-                PREFS_FILE,
+                context,
+                ENCRYPTED_PREFS_FILE,
                 masterKey,
                 EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
                 EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
             )
         } catch (e: Exception) {
-            Log.w(TAG, "EncryptedSharedPreferences init failed, falling back to private prefs: ${e.message}")
-            ctx.getSharedPreferences(PREFS_FILE, Context.MODE_PRIVATE)
+            Log.w(TAG, "EncryptedSharedPreferences init failed: ${e.message}")
+            null
+        }
+    }
+
+    /**
+     * Seamlessly migrates login state and profile from legacy prefs if standard prefs is uninitialized.
+     */
+    private fun migrateLegacySession() {
+        if (!standardPrefs.contains(KEY_IS_LOGGED_IN)) {
+            val encrypted = getEncryptedPrefs() ?: context.getSharedPreferences(ENCRYPTED_PREFS_FILE, Context.MODE_PRIVATE)
+            val wasLoggedIn = encrypted.getBoolean(KEY_IS_LOGGED_IN, false)
+            val profileJson = encrypted.getString(KEY_USER_PROFILE_JSON, null)
+            val access = encrypted.getString(KEY_ACCESS_TOKEN, null) ?: encrypted.getString(KEY_AUTH_TOKEN, null)
+            val refresh = encrypted.getString(KEY_REFRESH_TOKEN, null)
+
+            if (wasLoggedIn) {
+                Log.i(TAG, "Migrating legacy login session to standard SharedPreferences...")
+                val editor = standardPrefs.edit()
+                    .putBoolean(KEY_IS_LOGGED_IN, true)
+                if (!profileJson.isNullOrBlank()) editor.putString(KEY_USER_PROFILE_JSON, profileJson)
+                if (!access.isNullOrBlank()) {
+                    editor.putString(KEY_ACCESS_TOKEN, access)
+                    editor.putString(KEY_AUTH_TOKEN, access)
+                }
+                if (!refresh.isNullOrBlank()) editor.putString(KEY_REFRESH_TOKEN, refresh)
+                editor.apply()
+            }
         }
     }
 
     @Synchronized
     private fun loadProfile(): UserProfile? {
-        val json = prefs.getString(KEY_USER_PROFILE_JSON, null) ?: return null
+        val json = standardPrefs.getString(KEY_USER_PROFILE_JSON, null) ?: return null
         return try {
             gson.fromJson(json, UserProfile::class.java)
         } catch (e: Exception) {
@@ -79,13 +117,24 @@ class UserSessionManager @Inject constructor(
     @Synchronized
     fun saveAuthSession(profile: UserProfile, accessToken: String, refreshToken: String) {
         val json = gson.toJson(profile)
-        prefs.edit()
+
+        // 1. Save core session state to standard prefs (reboot-immune)
+        standardPrefs.edit()
             .putBoolean(KEY_IS_LOGGED_IN, true)
             .putString(KEY_AUTH_TOKEN, accessToken)
             .putString(KEY_ACCESS_TOKEN, accessToken)
             .putString(KEY_REFRESH_TOKEN, refreshToken)
             .putString(KEY_USER_PROFILE_JSON, json)
             .apply()
+
+        // 2. Save tokens to encrypted prefs
+        getEncryptedPrefs()?.edit()
+            ?.putBoolean(KEY_IS_LOGGED_IN, true)
+            ?.putString(KEY_AUTH_TOKEN, accessToken)
+            ?.putString(KEY_ACCESS_TOKEN, accessToken)
+            ?.putString(KEY_REFRESH_TOKEN, refreshToken)
+            ?.putString(KEY_USER_PROFILE_JSON, json)
+            ?.apply()
 
         _userProfile.value = profile
         _isLoggedIn.value = true
@@ -110,12 +159,20 @@ class UserSessionManager @Inject constructor(
         }
 
         val json = gson.toJson(initialProfile)
-        prefs.edit()
+
+        standardPrefs.edit()
             .putBoolean(KEY_IS_LOGGED_IN, true)
             .putString(KEY_AUTH_TOKEN, token)
             .putString(KEY_ACCESS_TOKEN, token)
             .putString(KEY_USER_PROFILE_JSON, json)
             .apply()
+
+        getEncryptedPrefs()?.edit()
+            ?.putBoolean(KEY_IS_LOGGED_IN, true)
+            ?.putString(KEY_AUTH_TOKEN, token)
+            ?.putString(KEY_ACCESS_TOKEN, token)
+            ?.putString(KEY_USER_PROFILE_JSON, json)
+            ?.apply()
 
         _userProfile.value = initialProfile
         _isLoggedIn.value = true
@@ -123,13 +180,21 @@ class UserSessionManager @Inject constructor(
 
     @Synchronized
     fun updateTokens(accessToken: String, refreshToken: String?) {
-        val editor = prefs.edit()
+        val stdEditor = standardPrefs.edit()
             .putString(KEY_AUTH_TOKEN, accessToken)
             .putString(KEY_ACCESS_TOKEN, accessToken)
         if (!refreshToken.isNullOrBlank()) {
-            editor.putString(KEY_REFRESH_TOKEN, refreshToken)
+            stdEditor.putString(KEY_REFRESH_TOKEN, refreshToken)
         }
-        editor.apply()
+        stdEditor.apply()
+
+        val encEditor = getEncryptedPrefs()?.edit()
+            ?.putString(KEY_AUTH_TOKEN, accessToken)
+            ?.putString(KEY_ACCESS_TOKEN, accessToken)
+        if (!refreshToken.isNullOrBlank()) {
+            encEditor?.putString(KEY_REFRESH_TOKEN, refreshToken)
+        }
+        encEditor?.apply()
     }
 
     /**
@@ -142,10 +207,10 @@ class UserSessionManager @Inject constructor(
             if (parts.size < 2) return true
             val payloadBase64 = parts[1]
             val decodedBytes = try {
-                java.util.Base64.getUrlDecoder().decode(payloadBase64)
+                Base64.getUrlDecoder().decode(payloadBase64)
             } catch (_: Exception) {
                 try {
-                    java.util.Base64.getDecoder().decode(payloadBase64)
+                    Base64.getDecoder().decode(payloadBase64)
                 } catch (_: Exception) {
                     null
                 }
@@ -234,19 +299,22 @@ class UserSessionManager @Inject constructor(
     @Synchronized
     fun updateProfile(profile: UserProfile) {
         val json = gson.toJson(profile)
-        prefs.edit()
-            .putString(KEY_USER_PROFILE_JSON, json)
-            .apply()
+        standardPrefs.edit().putString(KEY_USER_PROFILE_JSON, json).apply()
+        getEncryptedPrefs()?.edit()?.putString(KEY_USER_PROFILE_JSON, json)?.apply()
 
         _userProfile.value = profile
     }
 
     fun getAccessToken(): String? {
-        return prefs.getString(KEY_ACCESS_TOKEN, null) ?: prefs.getString(KEY_AUTH_TOKEN, null)
+        return getEncryptedPrefs()?.getString(KEY_ACCESS_TOKEN, null)
+            ?: getEncryptedPrefs()?.getString(KEY_AUTH_TOKEN, null)
+            ?: standardPrefs.getString(KEY_ACCESS_TOKEN, null)
+            ?: standardPrefs.getString(KEY_AUTH_TOKEN, null)
     }
 
     fun getRefreshToken(): String? {
-        return prefs.getString(KEY_REFRESH_TOKEN, null)
+        return getEncryptedPrefs()?.getString(KEY_REFRESH_TOKEN, null)
+            ?: standardPrefs.getString(KEY_REFRESH_TOKEN, null)
     }
 
     fun getAuthToken(): String? {
@@ -255,11 +323,18 @@ class UserSessionManager @Inject constructor(
 
     @Synchronized
     fun clearSession() {
-        prefs.edit()
-            .clear()
-            .apply()
+        standardPrefs.edit().clear().apply()
+        try {
+            getEncryptedPrefs()?.edit()?.clear()?.apply()
+        } catch (_: Exception) {}
 
         _userProfile.value = null
         _isLoggedIn.value = false
+
+        try {
+            TriqxAssistantNotificationManager.cancelAllAssistantNotifications(context)
+        } catch (e: Exception) {
+            Log.w(TAG, "Error clearing assistant notifications on session clear: ${e.message}")
+        }
     }
 }

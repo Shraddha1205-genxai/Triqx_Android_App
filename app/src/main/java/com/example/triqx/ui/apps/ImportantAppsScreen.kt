@@ -517,6 +517,10 @@ fun AppSelectionScreen(
         list.distinctBy { it.packageName }
     }
 
+    val (messagingApps, otherApps) = remember(filteredApps) {
+        filteredApps.partition { isMessagingPackage(it.packageName) }
+    }
+
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
@@ -600,78 +604,193 @@ fun AppSelectionScreen(
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(top = Dimens.SpacingNano, bottom = 80.dp)
                 ) {
-                    items(filteredApps, key = { it.packageName }) { app ->
-                        val isSelected = selectedPackages.contains(app.packageName)
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
+                    // Section 1: Messaging & Communication Apps
+                    if (messagingApps.isNotEmpty()) {
+                        item {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = Dimens.SpacingStandard, vertical = 10.dp)
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.Forum,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Text(
+                                        text = "Messaging & Communication Apps",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                                Text(
+                                    text = "Select messaging apps to monitor for priority notifications.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(top = 2.dp)
+                                )
+                            }
+                        }
+
+                        items(messagingApps, key = { "msg_${it.packageName}" }) { app ->
+                            val isSelected = selectedPackages.contains(app.packageName)
+                            AppSelectionRow(
+                                app = app,
+                                isSelected = isSelected,
+                                onToggle = {
                                     if (isSelected) {
                                         selectedPackages.remove(app.packageName)
                                     } else {
                                         selectedPackages.add(app.packageName)
                                     }
                                 }
-                                .background(
-                                    if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f)
-                                    else Color.Transparent
-                                )
-                        ) {
-                            Row(
+                            )
+                        }
+
+                        item {
+                            Spacer(modifier = Modifier.height(16.dp))
+                        }
+                    }
+
+                    // Section 2: Other Installed Apps
+                    if (otherApps.isNotEmpty()) {
+                        item {
+                            Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(horizontal = Dimens.SpacingStandard, vertical = Dimens.SpacingSemiMedium),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(Dimens.SpacingMedium)
+                                    .padding(horizontal = Dimens.SpacingStandard, vertical = 10.dp)
                             ) {
-                                Surface(
-                                    modifier = Modifier.size(42.dp),
-                                    shape = RoundedCornerShape(12.dp),
-                                    color = MaterialTheme.colorScheme.surfaceContainerHighest
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
-                                    AppIcon(
-                                        packageName = app.packageName,
-                                        appName = app.appName,
-                                        modifier = Modifier
-                                            .fillMaxSize()
-                                            .padding(4.dp)
+                                    Icon(
+                                        Icons.Default.Apps,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.secondary,
+                                        modifier = Modifier.size(20.dp)
                                     )
-                                }
-
-                                Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        text = app.appName,
-                                        style = MaterialTheme.typography.titleSmall,
+                                        text = "Other Installed Apps",
+                                        style = MaterialTheme.typography.titleMedium,
                                         fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.onSurface
-                                    )
-                                    Text(
-                                        text = app.packageName,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        color = MaterialTheme.colorScheme.secondary
                                     )
                                 }
-
-                                Checkbox(
-                                    checked = isSelected,
-                                    onCheckedChange = { checked ->
-                                        if (checked) {
-                                            selectedPackages.add(app.packageName)
-                                        } else {
-                                            selectedPackages.remove(app.packageName)
-                                        }
-                                    }
-                                )
                             }
-                            HorizontalDivider(
-                                modifier = Modifier.padding(start = 70.dp, end = Dimens.SpacingStandard),
-                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f),
-                                thickness = 0.5.dp
-                            )
+                        }
+
+                        items(otherApps, key = { "other_${it.packageName}" }) { app ->
+                            val isSelected = selectedPackages.contains(app.packageName)
+                            AppSelectionRow(
+                                app = app,
+                                isSelected = isSelected,
+                                onToggle = {
+                                    if (isSelected) {
+                                        selectedPackages.remove(app.packageName)
+                                    } else {
+                                        selectedPackages.add(app.packageName)
+                                    }
+                                }
+                                )
                         }
                     }
                 }
             }
         }
     }
+}
+
+@Composable
+private fun AppSelectionRow(
+    app: AppInfo,
+    isSelected: Boolean,
+    onToggle: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onToggle)
+            .background(
+                if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f)
+                else Color.Transparent
+            )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = Dimens.SpacingStandard, vertical = Dimens.SpacingSemiMedium),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(Dimens.SpacingMedium)
+        ) {
+            Surface(
+                modifier = Modifier.size(42.dp),
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHighest
+            ) {
+                AppIcon(
+                    packageName = app.packageName,
+                    appName = app.appName,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(4.dp)
+                )
+            }
+
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = app.appName,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = app.packageName,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            Checkbox(
+                checked = isSelected,
+                onCheckedChange = { onToggle() }
+            )
+        }
+        HorizontalDivider(
+            modifier = Modifier.padding(start = 70.dp, end = Dimens.SpacingStandard),
+            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f),
+            thickness = 0.5.dp
+        )
+    }
+}
+
+private fun isMessagingPackage(packageName: String): Boolean {
+    val pkg = packageName.lowercase()
+    return pkg.contains("whatsapp") ||
+           pkg.contains("telegram") ||
+           pkg.contains("slack") ||
+           pkg.contains("messaging") ||
+           pkg.contains("message") ||
+           pkg.contains("gmail") ||
+           pkg.contains("outlook") ||
+           pkg.contains("email") ||
+           pkg.contains("mail") ||
+           pkg.contains("instagram") ||
+           pkg.contains("orca") ||
+           pkg.contains("facebook.katana") ||
+           pkg.contains("signal") ||
+           pkg.contains("discord") ||
+           pkg.contains("teams") ||
+           pkg.contains("skype") ||
+           pkg.contains("viber") ||
+           pkg.contains("line") ||
+           pkg.contains("snapchat") ||
+           pkg.contains("wechat") ||
+           pkg.contains("messenger")
 }
