@@ -7,6 +7,7 @@ import com.example.triqx.data.local.AppDao
 import com.example.triqx.data.local.ContactDao
 import com.example.triqx.data.local.ConversationDao
 import com.example.triqx.data.local.NotificationDao
+import com.example.triqx.data.local.ObligationDao
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -39,6 +40,29 @@ object DatabaseModule {
         }
     }
 
+    private val MIGRATION_13_14 = object : androidx.room.migration.Migration(13, 14) {
+        override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `obligations` (
+                    `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    `title` TEXT NOT NULL,
+                    `category` TEXT NOT NULL,
+                    `identity` TEXT NOT NULL,
+                    `createdAt` INTEGER NOT NULL,
+                    `dueTimestamp` INTEGER,
+                    `urgency` TEXT NOT NULL,
+                    `amount` REAL,
+                    `status` TEXT NOT NULL,
+                    `conversationKey` TEXT,
+                    `completedAt` INTEGER,
+                    `confidence` REAL NOT NULL
+                )
+                """.trimIndent()
+            )
+        }
+    }
+
     @Provides
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): AppDatabase {
@@ -47,7 +71,7 @@ object DatabaseModule {
             AppDatabase::class.java,
             "triqx_database"
         )
-        .addMigrations(MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13)
+        .addMigrations(MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14)
         .fallbackToDestructiveMigration()
         .build()
     }
@@ -70,5 +94,10 @@ object DatabaseModule {
     @Provides
     fun provideConversationDao(database: AppDatabase): ConversationDao {
         return database.conversationDao()
+    }
+
+    @Provides
+    fun provideObligationDao(database: AppDatabase): ObligationDao {
+        return database.obligationDao()
     }
 }

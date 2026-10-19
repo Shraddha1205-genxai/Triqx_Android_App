@@ -9,26 +9,37 @@ import com.example.triqx.data.remote.InvalidRefreshTokenException
 import com.example.triqx.data.remote.OtpAuthService
 import com.example.triqx.service.TriqxAssistantNotificationManager
 import com.google.gson.Gson
-import com.google.gson.JsonParser
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
-import java.util.Base64
 import javax.inject.Inject
 import javax.inject.Singleton
 
+/** Tokens exist but the secure store can't be read right now. The session is kept; retry later. */
+class SecureStorageUnavailableException(message: String) : java.io.IOException(message)
+
 /**
- * Secure persistent store for user session and profile data.
- * Keeps core session state (`is_logged_in`, `user_profile`) in standard SharedPreferences
- * so the app never logs out on device reboot, while keeping OAuth tokens securely encrypted.
+ * Owns the user's session:
+ *  - tokens live ONLY in [SecureTokenStore] (Keystore AES-GCM),
+ *  - profile + login flags live in plain SharedPreferences (so a reboot never logs anyone out),
+ *  - refresh is single-flight and survives caller cancellation,
+ *  - when the server definitively rejects the refresh token we "soft logout" ([markNeedsReauth]):
+ *    tokens are dropped and the user is sent to the login screen, but their profile, priority
+ *    contacts/apps, conversations and settings stay on the device. Signing in again restores them.
+ *    Only an explicit sign-out ([clearSession]) wipes data.
  */
 @Singleton
 class UserSessionManager @Inject constructor(
     @param:ApplicationContext private val context: Context,
-    private val gson: Gson
+    private val gson: Gson,
+    private val tokenStore: SecureTokenStore
 ) {
 
     companion object {
@@ -37,71 +48,119 @@ class UserSessionManager @Inject constructor(
         private const val ENCRYPTED_PREFS_FILE = "triqx_secure_session_prefs"
 
         private const val KEY_IS_LOGGED_IN = "is_logged_in"
-        private const val KEY_AUTH_TOKEN = "auth_token"
-        private const val KEY_ACCESS_TOKEN = "access_token"
-        private const val KEY_REFRESH_TOKEN = "refresh_token"
+        private const val KEY_NEEDS_REAUTH = "needs_reauth"
+        private const val KEY_TOKENS_MIGRATED = "tokens_migrated_v2"
+        private const val KEY_LAST_REFRESH_AT = "last_refresh_at"
         private const val KEY_USER_PROFILE_JSON = "user_profile_json"
+
+        // Legacy token keys (pre-SecureTokenStore). Read once for migration, then deleted.
+        private const val LEGACY_AUTH_TOKEN = "auth_token"
+        private const val LEGACY_ACCESS_TOKEN = "access_token"
+        private const val LEGACY_REFRESH_TOKEN = "refresh_token"
     }
 
-    private val standardPrefs: SharedPreferences = context.getSharedPreferences(STANDARD_PREFS_FILE, Context.MODE_PRIVATE)
+    private val standardPrefs: SharedPreferences =
+        context.getSharedPreferences(STANDARD_PREFS_FILE, Context.MODE_PRIVATE)
 
     init {
-        migrateLegacySession()
+        migrateLegacyProfile()
+        migrateLegacyTokens()
     }
 
     private val _isLoggedIn = MutableStateFlow(standardPrefs.getBoolean(KEY_IS_LOGGED_IN, false))
+    /** True only while there is a usable session. False during soft logout and after sign-out. */
     val isLoggedIn: StateFlow<Boolean> = _isLoggedIn.asStateFlow()
+
+    private val _needsReauth = MutableStateFlow(standardPrefs.getBoolean(KEY_NEEDS_REAUTH, false))
+    /** True when the session expired/was revoked and the user must verify their number again. */
+    val needsReauth: StateFlow<Boolean> = _needsReauth.asStateFlow()
 
     private val _userProfile = MutableStateFlow<UserProfile?>(loadProfile())
     val userProfile: StateFlow<UserProfile?> = _userProfile.asStateFlow()
 
-    /**
-     * Attempts to create/access EncryptedSharedPreferences safely.
-     * Returns null if Android Keystore is temporarily locked (e.g. before initial device unlock).
-     */
-    private fun getEncryptedPrefs(): SharedPreferences? {
-        return try {
-            val masterKey = MasterKey.Builder(context)
-                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-                .build()
-            EncryptedSharedPreferences.create(
-                context,
-                ENCRYPTED_PREFS_FILE,
-                masterKey,
-                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-            )
-        } catch (e: Exception) {
-            Log.w(TAG, "EncryptedSharedPreferences init failed: ${e.message}")
-            null
+    init {
+        // Logged in on paper, but the tokens are gone for good (key lost / data corrupt): soft logout now
+        // instead of failing on the first API call. A merely *unavailable* store is left alone.
+        if (_isLoggedIn.value && tokenStore.read() is TokenRead.Absent) {
+            markNeedsReauth("logged-in flag set but no tokens stored")
         }
     }
 
-    /**
-     * Seamlessly migrates login state and profile from legacy prefs if standard prefs is uninitialized.
-     */
-    private fun migrateLegacySession() {
-        if (!standardPrefs.contains(KEY_IS_LOGGED_IN)) {
-            val encrypted = getEncryptedPrefs() ?: context.getSharedPreferences(ENCRYPTED_PREFS_FILE, Context.MODE_PRIVATE)
-            val wasLoggedIn = encrypted.getBoolean(KEY_IS_LOGGED_IN, false)
-            val profileJson = encrypted.getString(KEY_USER_PROFILE_JSON, null)
-            val access = encrypted.getString(KEY_ACCESS_TOKEN, null) ?: encrypted.getString(KEY_AUTH_TOKEN, null)
-            val refresh = encrypted.getString(KEY_REFRESH_TOKEN, null)
+    // ---------------------------------------------------------------- legacy migration
 
-            if (wasLoggedIn) {
-                Log.i(TAG, "Migrating legacy login session to standard SharedPreferences...")
-                val editor = standardPrefs.edit()
-                    .putBoolean(KEY_IS_LOGGED_IN, true)
-                if (!profileJson.isNullOrBlank()) editor.putString(KEY_USER_PROFILE_JSON, profileJson)
-                if (!access.isNullOrBlank()) {
-                    editor.putString(KEY_ACCESS_TOKEN, access)
-                    editor.putString(KEY_AUTH_TOKEN, access)
-                }
-                if (!refresh.isNullOrBlank()) editor.putString(KEY_REFRESH_TOKEN, refresh)
-                editor.apply()
+    private fun getLegacyEncryptedPrefs(): SharedPreferences? = try {
+        val masterKey = MasterKey.Builder(context).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build()
+        EncryptedSharedPreferences.create(
+            context,
+            ENCRYPTED_PREFS_FILE,
+            masterKey,
+            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+        )
+    } catch (e: Exception) {
+        Log.w(TAG, "Legacy EncryptedSharedPreferences unavailable: ${e.message}")
+        null
+    }
+
+    /** Very old layout: login state/profile only in the encrypted file. */
+    private fun migrateLegacyProfile() {
+        if (standardPrefs.contains(KEY_IS_LOGGED_IN)) return
+        val encrypted = getLegacyEncryptedPrefs() ?: return
+        if (!encrypted.getBoolean(KEY_IS_LOGGED_IN, false)) return
+        val editor = standardPrefs.edit().putBoolean(KEY_IS_LOGGED_IN, true)
+        encrypted.getString(KEY_USER_PROFILE_JSON, null)?.takeIf { it.isNotBlank() }
+            ?.let { editor.putString(KEY_USER_PROFILE_JSON, it) }
+        editor.commit()
+    }
+
+    /**
+     * Tokens used to be duplicated in plain prefs AND EncryptedSharedPreferences. Move them into the single
+     * [SecureTokenStore]. If the copies disagree we keep the pair whose access token expires last (the
+     * most recently issued), then delete both legacy copies.
+     */
+    private fun migrateLegacyTokens() {
+        if (standardPrefs.getBoolean(KEY_TOKENS_MIGRATED, false)) return
+
+        val candidates = mutableListOf<LegacyTokens>()
+        candidates += LegacyTokens(
+            access = standardPrefs.getString(LEGACY_ACCESS_TOKEN, null) ?: standardPrefs.getString(LEGACY_AUTH_TOKEN, null),
+            refresh = standardPrefs.getString(LEGACY_REFRESH_TOKEN, null),
+            source = "plain"
+        )
+        val encrypted = getLegacyEncryptedPrefs()
+        if (encrypted != null) {
+            try {
+                candidates += LegacyTokens(
+                    access = encrypted.getString(LEGACY_ACCESS_TOKEN, null) ?: encrypted.getString(LEGACY_AUTH_TOKEN, null),
+                    refresh = encrypted.getString(LEGACY_REFRESH_TOKEN, null),
+                    source = "encrypted"
+                )
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not read legacy encrypted tokens: ${e.message}")
             }
         }
+
+        val best = pickNewestLegacy(candidates) { jwtExpiryEpochSeconds(it) }
+        if (best != null) {
+            Log.i(TAG, "Migrating legacy tokens from '${best.source}' store into SecureTokenStore")
+            val persisted = tokenStore.write(best.access!!, best.refresh)
+            if (!persisted) {
+                // Keystore not ready yet. Tokens are usable from memory this run; retry the migration next start.
+                return
+            }
+        }
+
+        standardPrefs.edit()
+            .remove(LEGACY_ACCESS_TOKEN).remove(LEGACY_AUTH_TOKEN).remove(LEGACY_REFRESH_TOKEN)
+            .putBoolean(KEY_TOKENS_MIGRATED, true)
+            .commit()
+        try {
+            encrypted?.edit()?.remove(LEGACY_ACCESS_TOKEN)?.remove(LEGACY_AUTH_TOKEN)?.remove(LEGACY_REFRESH_TOKEN)?.commit()
+        } catch (_: Exception) {
+        }
     }
+
+    // ---------------------------------------------------------------- profile
 
     @Synchronized
     private fun loadProfile(): UserProfile? {
@@ -115,220 +174,62 @@ class UserSessionManager @Inject constructor(
     }
 
     @Synchronized
-    fun saveAuthSession(profile: UserProfile, accessToken: String, refreshToken: String) {
-        val json = gson.toJson(profile)
-
-        // 1. Save core session state to standard prefs (reboot-immune)
-        standardPrefs.edit()
-            .putBoolean(KEY_IS_LOGGED_IN, true)
-            .putString(KEY_AUTH_TOKEN, accessToken)
-            .putString(KEY_ACCESS_TOKEN, accessToken)
-            .putString(KEY_REFRESH_TOKEN, refreshToken)
-            .putString(KEY_USER_PROFILE_JSON, json)
-            .apply()
-
-        // 2. Save tokens to encrypted prefs
-        getEncryptedPrefs()?.edit()
-            ?.putBoolean(KEY_IS_LOGGED_IN, true)
-            ?.putString(KEY_AUTH_TOKEN, accessToken)
-            ?.putString(KEY_ACCESS_TOKEN, accessToken)
-            ?.putString(KEY_REFRESH_TOKEN, refreshToken)
-            ?.putString(KEY_USER_PROFILE_JSON, json)
-            ?.apply()
-
-        _userProfile.value = profile
-        _isLoggedIn.value = true
-    }
-
-    @Synchronized
-    fun saveSession(verifiedPhoneNumber: String, token: String) {
-        val current = _userProfile.value
-        val initialProfile = if (current != null) {
-            val phones = if (current.phoneNumbers.contains(verifiedPhoneNumber)) {
-                current.phoneNumbers
-            } else {
-                listOf(verifiedPhoneNumber) + current.phoneNumbers
-            }
-            current.copy(phoneNumbers = phones, mobileNumber = verifiedPhoneNumber)
-        } else {
-            UserProfile(
-                phoneNumbers = listOf(verifiedPhoneNumber),
-                mobileNumber = verifiedPhoneNumber,
-                isFirstLogin = true
-            )
-        }
-
-        val json = gson.toJson(initialProfile)
-
-        standardPrefs.edit()
-            .putBoolean(KEY_IS_LOGGED_IN, true)
-            .putString(KEY_AUTH_TOKEN, token)
-            .putString(KEY_ACCESS_TOKEN, token)
-            .putString(KEY_USER_PROFILE_JSON, json)
-            .apply()
-
-        getEncryptedPrefs()?.edit()
-            ?.putBoolean(KEY_IS_LOGGED_IN, true)
-            ?.putString(KEY_AUTH_TOKEN, token)
-            ?.putString(KEY_ACCESS_TOKEN, token)
-            ?.putString(KEY_USER_PROFILE_JSON, json)
-            ?.apply()
-
-        _userProfile.value = initialProfile
-        _isLoggedIn.value = true
-    }
-
-    @Synchronized
-    fun updateTokens(accessToken: String, refreshToken: String?) {
-        val stdEditor = standardPrefs.edit()
-            .putString(KEY_AUTH_TOKEN, accessToken)
-            .putString(KEY_ACCESS_TOKEN, accessToken)
-        if (!refreshToken.isNullOrBlank()) {
-            stdEditor.putString(KEY_REFRESH_TOKEN, refreshToken)
-        }
-        stdEditor.apply()
-
-        val encEditor = getEncryptedPrefs()?.edit()
-            ?.putString(KEY_AUTH_TOKEN, accessToken)
-            ?.putString(KEY_ACCESS_TOKEN, accessToken)
-        if (!refreshToken.isNullOrBlank()) {
-            encEditor?.putString(KEY_REFRESH_TOKEN, refreshToken)
-        }
-        encEditor?.apply()
-    }
-
-    /**
-     * Checks if a JWT token has expired or is about to expire within [bufferSeconds].
-     */
-    fun isTokenExpired(token: String? = getAccessToken(), bufferSeconds: Long = 60): Boolean {
-        if (token.isNullOrBlank()) return true
-        return try {
-            val parts = token.split(".")
-            if (parts.size < 2) return true
-            val payloadBase64 = parts[1]
-            val decodedBytes = try {
-                Base64.getUrlDecoder().decode(payloadBase64)
-            } catch (_: Exception) {
-                try {
-                    Base64.getDecoder().decode(payloadBase64)
-                } catch (_: Exception) {
-                    null
-                }
-            } ?: return true
-            val json = String(decodedBytes, Charsets.UTF_8)
-            val jsonObject = JsonParser.parseString(json).asJsonObject
-            if (!jsonObject.has("exp")) return false
-            val expEpochSeconds = jsonObject.get("exp").asLong
-            val currentEpochSeconds = System.currentTimeMillis() / 1000
-            currentEpochSeconds >= (expEpochSeconds - bufferSeconds)
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to parse JWT expiration: ${e.message}")
-            false
-        }
-    }
-
-    private val tokenRefreshMutex = Mutex()
-
-    /**
-     * Thread-safe method to explicitly refresh the access token using the stored refresh token.
-     * Returns a [Result] containing the new access token on success, or an exception describing the failure.
-     */
-    suspend fun refreshAccessToken(
-        otpAuthService: OtpAuthService,
-        failedToken: String? = null
-    ): Result<String> = tokenRefreshMutex.withLock {
-        val currentToken = getAccessToken()
-
-        // If another concurrent coroutine already refreshed it while this coroutine was waiting on the mutex:
-        if (failedToken != null && !currentToken.isNullOrBlank() && currentToken != failedToken && !isTokenExpired(currentToken)) {
-            Log.i(TAG, "[TOKEN REFRESH] Token was already refreshed by another concurrent request. Reusing fresh token.")
-            return Result.success(currentToken)
-        }
-
-        val refreshToken = getRefreshToken()
-        if (refreshToken.isNullOrBlank()) {
-            val msg = "No refresh token stored in session manager. User must re-login to obtain a valid session."
-            Log.w(TAG, "[TOKEN REFRESH] $msg")
-            return Result.failure(IllegalStateException(msg))
-        }
-
-        Log.i(TAG, "[TOKEN REFRESH] Calling /api/auth/refresh with refresh token...")
-        val refreshResult = otpAuthService.refreshToken(refreshToken)
-        return if (refreshResult.isSuccess) {
-            val (newAccess, newRefresh) = refreshResult.getOrThrow()
-            updateTokens(newAccess, newRefresh)
-            Log.i(TAG, "[TOKEN REFRESH] Successfully updated access and refresh tokens.")
-            Result.success(newAccess)
-        } else {
-            val ex = refreshResult.exceptionOrNull()
-            val errorMsg = ex?.message ?: "Unknown token refresh error"
-            Log.w(TAG, "[TOKEN REFRESH] Silent token refresh failed: $errorMsg")
-
-            // If the refresh token was revoked, invalidated, or expired:
-            if (ex is InvalidRefreshTokenException ||
-                errorMsg.contains("Invalid refresh token", ignoreCase = true) ||
-                errorMsg.contains("revoked", ignoreCase = true)
-            ) {
-                Log.w(TAG, "[TOKEN REFRESH] Refresh token is permanently invalid/revoked (e.g. logged in on another device). Auto-logging out and clearing session.")
-                clearSession()
-            }
-
-            Result.failure(ex ?: Exception(errorMsg))
-        }
-    }
-
-    /**
-     * Centralized, thread-safe access token retriever that proactively refreshes
-     * expired tokens using [OtpAuthService] with a coroutine Mutex.
-     */
-    suspend fun getValidAccessToken(
-        otpAuthService: OtpAuthService,
-        forceRefresh: Boolean = false,
-        failedToken: String? = null
-    ): String? {
-        if (!forceRefresh) {
-            val currentToken = getAccessToken()
-            if (!currentToken.isNullOrBlank() && !isTokenExpired(currentToken)) {
-                return currentToken
-            }
-        }
-        val result = refreshAccessToken(otpAuthService, failedToken)
-        return result.getOrNull()
-    }
-
-    @Synchronized
     fun updateProfile(profile: UserProfile) {
-        val json = gson.toJson(profile)
-        standardPrefs.edit().putString(KEY_USER_PROFILE_JSON, json).apply()
-        getEncryptedPrefs()?.edit()?.putString(KEY_USER_PROFILE_JSON, json)?.apply()
-
+        standardPrefs.edit().putString(KEY_USER_PROFILE_JSON, gson.toJson(profile)).apply()
         _userProfile.value = profile
     }
 
-    fun getAccessToken(): String? {
-        return getEncryptedPrefs()?.getString(KEY_ACCESS_TOKEN, null)
-            ?: getEncryptedPrefs()?.getString(KEY_AUTH_TOKEN, null)
-            ?: standardPrefs.getString(KEY_ACCESS_TOKEN, null)
-            ?: standardPrefs.getString(KEY_AUTH_TOKEN, null)
+    // ---------------------------------------------------------------- session lifecycle
+
+    @Synchronized
+    fun saveAuthSession(profile: UserProfile, accessToken: String, refreshToken: String) {
+        tokenStore.write(accessToken, refreshToken)
+        standardPrefs.edit()
+            .putBoolean(KEY_IS_LOGGED_IN, true)
+            .putBoolean(KEY_NEEDS_REAUTH, false)
+            .putBoolean(KEY_TOKENS_MIGRATED, true)
+            .putLong(KEY_LAST_REFRESH_AT, System.currentTimeMillis())
+            .putString(KEY_USER_PROFILE_JSON, gson.toJson(profile))
+            .commit()
+        _userProfile.value = profile
+        _needsReauth.value = false
+        _isLoggedIn.value = true
     }
 
-    fun getRefreshToken(): String? {
-        return getEncryptedPrefs()?.getString(KEY_REFRESH_TOKEN, null)
-            ?: standardPrefs.getString(KEY_REFRESH_TOKEN, null)
+    /**
+     * Soft logout: the server definitively rejected our refresh token (or it is gone). Drops the tokens and
+     * routes the user to the login screen, but KEEPS the profile and all local app data so signing in again
+     * restores everything. Idempotent.
+     */
+    @Synchronized
+    fun markNeedsReauth(reason: String) {
+        Log.w(TAG, "[SESSION] Needs re-authentication: $reason")
+        tokenStore.clear()
+        standardPrefs.edit()
+            .putBoolean(KEY_IS_LOGGED_IN, false)
+            .putBoolean(KEY_NEEDS_REAUTH, true)
+            .commit()
+        _needsReauth.value = true
+        _isLoggedIn.value = false
+        try {
+            TriqxAssistantNotificationManager.cancelAllAssistantNotifications(context)
+        } catch (e: Exception) {
+            Log.w(TAG, "Error clearing assistant notifications: ${e.message}")
+        }
     }
 
-    fun getAuthToken(): String? {
-        return getAccessToken()
-    }
-
+    /** Explicit sign-out: wipes tokens, profile and flags. (Callers wipe the other local data.) */
     @Synchronized
     fun clearSession() {
-        standardPrefs.edit().clear().apply()
+        tokenStore.clear()
+        standardPrefs.edit().clear().commit()
         try {
-            getEncryptedPrefs()?.edit()?.clear()?.apply()
-        } catch (_: Exception) {}
+            getLegacyEncryptedPrefs()?.edit()?.clear()?.commit()
+        } catch (_: Exception) {
+        }
 
         _userProfile.value = null
+        _needsReauth.value = false
         _isLoggedIn.value = false
 
         try {
@@ -336,5 +237,119 @@ class UserSessionManager @Inject constructor(
         } catch (e: Exception) {
             Log.w(TAG, "Error clearing assistant notifications on session clear: ${e.message}")
         }
+    }
+
+    // ---------------------------------------------------------------- tokens
+
+    fun getAccessToken(): String? = (tokenStore.read() as? TokenRead.Present)?.accessToken
+
+    fun getRefreshToken(): String? = (tokenStore.read() as? TokenRead.Present)?.refreshToken
+
+    fun getAuthToken(): String? = getAccessToken()
+
+    /** When the refresh token was last rotated (login or refresh); 0 if unknown. Used by the keep-alive worker. */
+    fun lastRefreshAtMillis(): Long = standardPrefs.getLong(KEY_LAST_REFRESH_AT, 0L)
+
+    fun isTokenExpired(token: String? = getAccessToken(), bufferSeconds: Long = 60): Boolean =
+        isJwtExpired(token, bufferSeconds)
+
+    /**
+     * Refresh runs in an app-scoped coroutine, NOT in the caller's. Callers (smart-reply jobs, ViewModels,
+     * OkHttp threads) are cancelled all the time; the server rotates the refresh token the instant it answers,
+     * so a cancelled caller used to lose the new pair and strand the device with a revoked token (the main
+     * cause of random same-day logouts). Concurrent callers share ONE in-flight refresh.
+     */
+    private val refreshScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val flightLock = Any()
+    private var inFlight: Deferred<Result<String>>? = null
+
+    suspend fun refreshAccessToken(
+        otpAuthService: OtpAuthService,
+        failedToken: String? = null
+    ): Result<String> {
+        val flight = synchronized(flightLock) {
+            val existing = inFlight
+            if (existing != null && existing.isActive) {
+                existing
+            } else {
+                refreshScope.async { doRefresh(otpAuthService, failedToken) }.also { inFlight = it }
+            }
+        }
+        return flight.await()
+    }
+
+    private suspend fun doRefresh(otpAuthService: OtpAuthService, failedToken: String?): Result<String> {
+        try {
+            var retriedWithNewerToken = false
+            while (true) {
+                when (val stored = tokenStore.read()) {
+                    is TokenRead.Unavailable ->
+                        return Result.failure(SecureStorageUnavailableException(stored.reason))
+
+                    is TokenRead.Absent -> {
+                        if (_isLoggedIn.value) markNeedsReauth("no tokens stored")
+                        return Result.failure(IllegalStateException("No active session"))
+                    }
+
+                    is TokenRead.Present -> {
+                        val access = stored.accessToken
+                        // Someone already refreshed while we waited: reuse unless it's the token the server just rejected.
+                        if (!isJwtExpired(access) && access != failedToken) {
+                            return Result.success(access)
+                        }
+                        val refresh = stored.refreshToken
+                        if (refresh.isNullOrBlank()) {
+                            markNeedsReauth("no refresh token stored")
+                            return Result.failure(IllegalStateException("No refresh token"))
+                        }
+
+                        Log.i(TAG, "[TOKEN REFRESH] Refreshing session...")
+                        val result = otpAuthService.refreshToken(refresh)
+                        if (result.isSuccess) {
+                            val (newAccess, newRefresh) = result.getOrThrow()
+                            tokenStore.write(newAccess, newRefresh)
+                            standardPrefs.edit().putLong(KEY_LAST_REFRESH_AT, System.currentTimeMillis()).apply()
+                            Log.i(TAG, "[TOKEN REFRESH] Session refreshed.")
+                            return Result.success(newAccess)
+                        }
+
+                        val ex = result.exceptionOrNull()
+                        if (ex is InvalidRefreshTokenException) {
+                            // Second look before giving up: if the stored refresh token changed while our request
+                            // was in flight, another path rotated it. Try the newer one once.
+                            val again = tokenStore.read()
+                            if (!retriedWithNewerToken && again is TokenRead.Present &&
+                                !again.refreshToken.isNullOrBlank() && again.refreshToken != refresh
+                            ) {
+                                retriedWithNewerToken = true
+                                continue
+                            }
+                            markNeedsReauth("refresh token rejected by server: ${ex.message}")
+                        } else {
+                            Log.w(TAG, "[TOKEN REFRESH] Transient failure, session kept: ${ex?.message}")
+                        }
+                        return Result.failure(ex ?: Exception("Unknown token refresh error"))
+                    }
+                }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "[TOKEN REFRESH] Unexpected failure, session kept: ${e.message}")
+            return Result.failure(e)
+        }
+    }
+
+    /** Returns a usable access token, refreshing first if needed. Null when there is no usable session. */
+    suspend fun getValidAccessToken(
+        otpAuthService: OtpAuthService,
+        forceRefresh: Boolean = false,
+        failedToken: String? = null
+    ): String? {
+        if (!forceRefresh) {
+            val current = getAccessToken()
+            if (!current.isNullOrBlank() && !isJwtExpired(current)) return current
+        }
+        return refreshAccessToken(otpAuthService, failedToken).getOrNull()
     }
 }

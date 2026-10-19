@@ -85,13 +85,6 @@ class OpenAiRepository @Inject constructor(
     )
     val defaultReplyCount: StateFlow<Int> = _defaultReplyCount.asStateFlow()
 
-    // Backward-compatibility flows for existing UI references
-    private val _apiKey = MutableStateFlow(prefs.getString("openai_api_key", "") ?: "")
-    val apiKey: StateFlow<String> = _apiKey.asStateFlow()
-
-    private val _selectedModel = MutableStateFlow(prefs.getString("openai_model", "backend-default") ?: "backend-default")
-    val selectedModel: StateFlow<String> = _selectedModel.asStateFlow()
-
     // --- Unified Cache (groupKey -> CachedReply(signature, replies)) ---
 
     private val _cache = MutableStateFlow<Map<String, CachedReply>>(emptyMap())
@@ -144,17 +137,6 @@ class OpenAiRepository @Inject constructor(
         Log.i(TAG, "Saved Default Reply Count: $clamped")
     }
 
-    fun setApiKey(key: String) {
-        val trimmed = key.trim()
-        prefs.edit().putString("openai_api_key", trimmed).apply()
-        _apiKey.value = trimmed
-    }
-
-    fun setModel(model: String) {
-        prefs.edit().putString("openai_model", model).apply()
-        _selectedModel.value = model
-    }
-
     /**
      * Completely wipes all AI reply caches, custom prompts, and settings on sign out.
      */
@@ -168,8 +150,6 @@ class OpenAiRepository @Inject constructor(
         _replyStyle.value = "concise"
         _additionalPrompt.value = ""
         _defaultReplyCount.value = 3
-        _apiKey.value = ""
-        _selectedModel.value = "backend-default"
         _backendBaseUrl.value = Constants.DEFAULT_BACKEND_BASE_URL
         Log.i(TAG, "Cleared all AI smart reply caches and preferences from device.")
     }
@@ -253,7 +233,10 @@ class OpenAiRepository @Inject constructor(
             throw e
         } catch (e: Exception) {
             Log.e(TAG, "Error generating replies from backend: ${e.message}")
-            cached?.replies ?: getDefaultReplies(messages.firstOrNull { !it.isFromYou }?.bodyText)
+            // Do NOT substitute canned replies (or replies cached for an older message): they would be
+            // shown as one-tap "Send" buttons and could be sent to a VIP contact. An empty list makes
+            // the assistant notification show "AI replies unavailable" with a free-text Reply action.
+            emptyList()
         } finally {
             setLoading(groupKey, false)
         }
@@ -312,13 +295,6 @@ class OpenAiRepository @Inject constructor(
             replyStyle = replyStyle,
             additionalPrompt = additionalPrompt
         )
-    }
-
-    /**
-     * Overload for backward compatibility with settings screen tests.
-     */
-    suspend fun testConnection(apiKey: String, model: String): Result<String> {
-        return testConnection()
     }
 
     // =============================
@@ -380,8 +356,10 @@ class OpenAiRepository @Inject constructor(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            Log.w(TAG, "Backend call failed, using offline fallback: ${e.message}")
-            getDefaultReplies(messages.firstOrNull { !it.isFromYou }?.bodyText, resolvedReplyCount)
+            // Propagate the failure so callers never cache fallback text as if it were AI output
+            // (a cached fallback also blocked regeneration for that message forever).
+            Log.w(TAG, "Backend reply generation failed: ${e.message}")
+            throw e
         }
     }
 

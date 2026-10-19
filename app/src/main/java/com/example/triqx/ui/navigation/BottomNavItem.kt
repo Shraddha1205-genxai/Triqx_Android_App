@@ -2,12 +2,14 @@ package com.example.triqx.ui.navigation
 
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Apps
+import androidx.compose.material.icons.filled.AssignmentLate
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Contacts
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.outlined.Apps
+import androidx.compose.material.icons.outlined.AssignmentLate
 import androidx.compose.material.icons.outlined.BugReport
 import androidx.compose.material.icons.outlined.Contacts
 import androidx.compose.material.icons.outlined.Home
@@ -26,6 +28,13 @@ sealed class BottomNavItem(
         title = "Home",
         selectedIcon = Icons.Filled.Home,
         unselectedIcon = Icons.Outlined.Home
+    )
+
+    object Priority : BottomNavItem(
+        route = "priority",
+        title = "Priority",
+        selectedIcon = Icons.Filled.AssignmentLate,
+        unselectedIcon = Icons.Outlined.AssignmentLate
     )
 
     object Filters : BottomNavItem(
@@ -66,9 +75,9 @@ sealed class BottomNavItem(
     companion object {
         fun getItems(showDebug: Boolean = false): List<BottomNavItem> {
             return if (showDebug) {
-                listOf(Home, Filters, Debug, Settings)
+                listOf(Home, Priority, Filters, Debug, Settings)
             } else {
-                listOf(Home, Filters, Settings)
+                listOf(Home, Priority, Filters, Settings)
             }
         }
     }

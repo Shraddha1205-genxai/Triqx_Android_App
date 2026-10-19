@@ -14,7 +14,7 @@ android {
 
     defaultConfig {
         applicationId = "com.example.triqx"
-        minSdk = 29
+        minSdk = 31
         targetSdk = 37
         versionCode = 1
         versionName = "1.0"
@@ -65,9 +65,11 @@ dependencies {
     implementation(libs.coil.compose)
     implementation(libs.gson)
     implementation(libs.okhttp)
+    implementation(libs.androidx.work.runtime.ktx)
     implementation(libs.appauth)
     implementation(libs.androidx.security.crypto)
     implementation(libs.play.services.auth)
+    implementation(libs.aicore)
     implementation("dev.chrisbanes.haze:haze:1.3.1")
     implementation("dev.chrisbanes.haze:haze-materials:1.3.1")
     testImplementation(libs.junit)

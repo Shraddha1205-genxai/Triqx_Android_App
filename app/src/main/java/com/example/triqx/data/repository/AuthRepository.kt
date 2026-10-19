@@ -33,6 +33,8 @@ class AuthRepository @Inject constructor(
 
     val isLoggedIn: StateFlow<Boolean> = userSessionManager.isLoggedIn
     val userProfile: StateFlow<UserProfile?> = userSessionManager.userProfile
+    /** True when the session lapsed and the user must verify again (their local data was kept). */
+    val needsReauth: StateFlow<Boolean> = userSessionManager.needsReauth
 
     suspend fun sendOtp(phoneNumber: String): Result<String> {
         return otpAuthService.sendOtp(phoneNumber)
@@ -40,6 +42,17 @@ class AuthRepository @Inject constructor(
 
     suspend fun verifyOtp(phoneNumber: String, otpCode: String): Result<Boolean> {
         val result = otpAuthService.verifyOtp(phoneNumber, otpCode)
+        // Soft-logout recovery: the profile (and all local data) were kept when the session lapsed. If the user
+        // now verifies the SAME number, everything is still theirs. A different number means a different
+        // person is using this device, so their predecessor's data must not leak into the new account.
+        val keptProfile = userSessionManager.userProfile.value
+        val verifiedProfile = result.getOrNull()?.userProfile
+        if (keptProfile != null && verifiedProfile != null &&
+            !samePhone(keptProfile.primaryPhone, verifiedProfile.primaryPhone)
+        ) {
+            Log.i(TAG, "Different number verified after a lapsed session; wiping previous user's local data.")
+            withContext(Dispatchers.IO) { wipeLocalData() }
+        }
         return result.map { verifyData ->
             userSessionManager.saveAuthSession(
                 profile = verifyData.userProfile,
@@ -48,6 +61,14 @@ class AuthRepository @Inject constructor(
             )
             true
         }
+    }
+
+    private fun samePhone(a: String, b: String): Boolean {
+        val da = a.filter { it.isDigit() }
+        val db = b.filter { it.isDigit() }
+        if (da.isEmpty() || db.isEmpty()) return false
+        // Compare the national part so "+91 98765…" and "98765…" count as the same number.
+        return da.takeLast(10) == db.takeLast(10)
     }
 
     suspend fun resendOtp(phoneNumber: String): Result<String> {
@@ -115,6 +136,15 @@ class AuthRepository @Inject constructor(
             Log.w(TAG, "Backend logout network call failed: ${e.message}")
         }
 
+        wipeLocalData()
+
+        // 3. Wipe User Session & Profile credentials
+        userSessionManager.clearSession()
+        Log.i(TAG, "User session cleared.")
+    }
+
+    /** Everything stored on the device for the current user except the session itself. */
+    private suspend fun wipeLocalData() {
         // 2. Wipe all Room database tables (priority_contacts, important_apps, notifications, conversations)
         try {
             appDatabase.clearAllTables()
@@ -122,10 +152,6 @@ class AuthRepository @Inject constructor(
         } catch (e: Exception) {
             Log.e(TAG, "Failed to clear Room database: ${e.message}", e)
         }
-
-        // 3. Wipe User Session & Profile credentials
-        userSessionManager.clearSession()
-        Log.i(TAG, "User session cleared.")
 
         // 4. Wipe connected email accounts and OAuth credentials
         emailAccountStore.clearAll()

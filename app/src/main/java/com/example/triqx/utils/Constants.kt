@@ -32,7 +32,7 @@ object Constants {
     )
 
     // Backend Base URL
-    var DEFAULT_BACKEND_BASE_URL = "https://triqxapi.genxai.io/api"
+    var DEFAULT_BACKEND_BASE_URL = "https://triqx-backend-1.onrender.com/api"
 
     // Backward-compatible route aliases
     val AI_GENERATE_REPLIES_PATH: String

@@ -56,6 +56,8 @@ import com.example.triqx.ui.navigation.TriqxBottomNavigationBar
 import com.example.triqx.ui.notifications.NotificationDetailsScreen
 import com.example.triqx.ui.notifications.NotificationHistoryScreen
 import com.example.triqx.ui.notifications.NotificationViewModel
+import com.example.triqx.ui.priority.PriorityScreen
+import com.example.triqx.ui.priority.PriorityViewModel
 import com.example.triqx.ui.settings.SettingsScreen
 import com.example.triqx.ui.settings.SettingsViewModel
 import com.example.triqx.ui.theme.Dimens
@@ -142,9 +144,9 @@ class MainActivity : ComponentActivity() {
 
                 val topLevelRoutes = remember(showDebugMenu) {
                     if (showDebugMenu) {
-                        setOf("home", "filters", "debug", "settings")
+                        setOf("home", "priority", "filters", "debug", "settings")
                     } else {
-                        setOf("home", "filters", "settings")
+                        setOf("home", "priority", "filters", "settings")
                     }
                 }
                 val currentBaseRoute = currentRoute?.substringBefore('?')
@@ -280,6 +282,16 @@ class MainActivity : ComponentActivity() {
                                         launchSingleTop = true
                                         restoreState = true
                                     }
+                                }
+                            )
+                        }
+                        composable("priority") {
+                            val priorityViewModel: PriorityViewModel = hiltViewModel()
+                            PriorityScreen(
+                                viewModel = priorityViewModel,
+                                onOpenChat = { conversationKey ->
+                                    val encoded = Uri.encode(conversationKey)
+                                    navController.navigate("chat/$encoded")
                                 }
                             )
                         }

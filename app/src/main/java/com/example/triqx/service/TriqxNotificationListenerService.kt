@@ -17,7 +17,9 @@ import com.example.triqx.data.local.ConversationEntity
 import com.example.triqx.data.local.NotificationDao
 import com.example.triqx.data.local.NotificationEntity
 import com.example.triqx.data.local.ReplyActionStore
+import com.example.triqx.data.remote.ai.PriorityAiManager
 import com.example.triqx.data.repository.OpenAiRepository
+import com.example.triqx.utils.ContactMatcher
 import com.example.triqx.utils.EmailUtils
 import com.google.gson.GsonBuilder
 import dagger.hilt.android.AndroidEntryPoint
@@ -49,6 +51,7 @@ class TriqxNotificationListenerService : NotificationListenerService() {
     @Inject lateinit var appDao: AppDao
     @Inject lateinit var contactDao: ContactDao
     @Inject lateinit var openAiRepository: OpenAiRepository
+    @Inject lateinit var priorityAiManager: PriorityAiManager
     @Inject lateinit var replyActionStore: ReplyActionStore
     @Inject lateinit var emailAccountStore: com.example.triqx.data.local.EmailAccountStore
     @Inject lateinit var mapperRegistry: com.example.triqx.service.mapper.NotificationMapperRegistry
@@ -90,11 +93,14 @@ class TriqxNotificationListenerService : NotificationListenerService() {
                 val priorityContacts = contactDao.getAllContacts().first()
                 activeNotifications?.forEach { sbn ->
                     val isImportant = appDao.isAppImportant(sbn.packageName).first()
-                    val title = sbn.notification.extras.getString(Notification.EXTRA_TITLE)
-                    val isContact = priorityContacts.any { c ->
-                        title?.contains(c.displayName, ignoreCase = true) == true ||
-                        (c.officialName?.let { title?.contains(it, ignoreCase = true) } == true)
-                    }
+                    val ex = sbn.notification.extras
+                    // getCharSequence: titles are often Spannable, so getString() silently returned null
+                    val title = ex.getCharSequence(Notification.EXTRA_TITLE)?.toString()
+                    val isContact = ContactMatcher.findBestMatch(
+                        contacts = priorityContacts,
+                        title = title,
+                        text = ex.getCharSequence(Notification.EXTRA_TEXT)?.toString()
+                    ) != null
 
                     if (isImportant || isContact) {
                         extractReplyAction(sbn.notification)?.let { action ->
@@ -331,6 +337,14 @@ class TriqxNotificationListenerService : NotificationListenerService() {
             if (p.startsWith("content://com.android.contacts/")) uriSet.add(p)
         }
 
+        // Who sent the NEWEST message (MessagingStyle). Used for VIP matching in group chats.
+        val latestSenderNames = mutableListOf<String>()
+        @Suppress("DEPRECATION")
+        (extras.getParcelableArray(Notification.EXTRA_MESSAGES)?.lastOrNull() as? Bundle)?.let { b ->
+            b.getCharSequence("sender")?.toString()?.takeIf { it.isNotBlank() }?.let { latestSenderNames.add(it) }
+            b.getParcelable<Person>("sender_person")?.name?.toString()?.takeIf { it.isNotBlank() }?.let { latestSenderNames.add(it) }
+        }
+
         val senderEmail = if (emailSet.isNotEmpty()) emailSet.firstOrNull { it.isNotBlank() } else null
         val contactLookupUri = if (uriSet.isNotEmpty()) uriSet.first() else null
 
@@ -384,30 +398,21 @@ class TriqxNotificationListenerService : NotificationListenerService() {
         serviceScope.launch {
             val isImportantApp = appDao.isAppImportant(packageName).first()
 
-            // Check if notification traces back to a priority contact
+            // Check if notification traces back to a priority contact.
+            // Scored, whole-word / exact-identifier matching (see ContactMatcher) instead of the old
+            // substring checks that matched "Raj" inside "Rajesh" or any message merely mentioning a VIP.
             val priorityContacts = contactDao.getAllContacts().first()
-            val matchedContact = priorityContacts.find { contact ->
-                val nameMatch = (title?.contains(contact.displayName, ignoreCase = true) == true) ||
-                                (contact.officialName?.let { title?.contains(it, ignoreCase = true) } == true) ||
-                                (text?.contains(contact.displayName, ignoreCase = true) == true) ||
-                                (contact.officialName?.let { text?.contains(it, ignoreCase = true) } == true)
-
-                val phoneMatch = contact.phoneNumbers.any { phone ->
-                    phone.isNotBlank() && ((title?.contains(phone) == true) || (text?.contains(phone) == true))
-                }
-
-                val emailMatch = contact.emails.any { email ->
-                    email.isNotBlank() && (
-                        (title?.contains(email, ignoreCase = true) == true) ||
-                        (text?.contains(email, ignoreCase = true) == true) ||
-                        (senderEmail?.contains(email, ignoreCase = true) == true)
-                    )
-                }
-
-                val uriMatch = contactLookupUri != null && contact.lookupKey != null &&
-                               contactLookupUri.contains(contact.lookupKey)
-
-                nameMatch || phoneMatch || emailMatch || uriMatch
+            val contactMatch = ContactMatcher.findBestMatch(
+                contacts = priorityContacts,
+                title = title,
+                text = text,
+                senderNames = latestSenderNames,
+                senderEmails = emailSet,
+                contactLookupUris = uriSet
+            )
+            val matchedContact = contactMatch?.contact
+            if (contactMatch != null) {
+                Log.d(TAG, "VIP match: contactId=${contactMatch.contact.id} via ${contactMatch.reason} (score ${contactMatch.score})")
             }
             val isFromPriorityContact = (matchedContact != null)
 
@@ -511,8 +516,22 @@ class TriqxNotificationListenerService : NotificationListenerService() {
 
                 val chatTitle = parsed.conversationTitle
 
-                // --- 6. TRIGGER ASSISTANT NOTIFICATION (Saved -> Call API -> Save Replies -> Post Notification) ---
+                // --- 6. TRIGGER ASSISTANT NOTIFICATION & PRIORITY OBLIGATION EXTRACTION ---
                 if (parsed.bodyText.isNotBlank()) {
+                    // Extract priority obligations (bills, deadlines, promises) using AI Core concurrently
+                    serviceScope.launch {
+                        try {
+                            priorityAiManager.extractAndSaveObligations(
+                                conversationKey = conversationKey,
+                                conversationTitle = chatTitle,
+                                packageName = packageName,
+                                messages = updatedMessages
+                            )
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Priority extraction error for '$conversationKey': ${e.message}")
+                        }
+                    }
+
                     Log.i(TAG, "===> [ASSISTANT FLOW] 1. Message saved in conversation. Calling AI replies API for '$conversationKey'...")
                     val smartReplies = openAiRepository.getOrGenerateReplies(conversationKey, chatTitle, updatedMessages)
                     Log.i(TAG, "===> [ASSISTANT FLOW] 2. Received & saved ${smartReplies.size} replies. Posting assistant notification...")

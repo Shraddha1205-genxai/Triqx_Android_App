@@ -37,8 +37,6 @@ class SettingsViewModel @Inject constructor(
 
     private val prefs = context.getSharedPreferences("triqx_settings_prefs", Context.MODE_PRIVATE)
 
-    val apiKey: StateFlow<String> = openAiRepository.apiKey
-    val selectedModel: StateFlow<String> = openAiRepository.selectedModel
     val backendBaseUrl: StateFlow<String> = openAiRepository.backendBaseUrl
     val replyStyle: StateFlow<String> = openAiRepository.replyStyle
     val additionalPrompt: StateFlow<String> = openAiRepository.additionalPrompt
@@ -120,29 +118,6 @@ class SettingsViewModel @Inject constructor(
                         "Error: ${err.message ?: "Failed to connect to backend AI"}"
                 }
                 _testResult.value = errorText
-            }
-            _isTesting.value = false
-        }
-    }
-
-    fun saveApiKey(key: String) {
-        openAiRepository.setApiKey(key)
-        _testResult.value = "API Key saved successfully."
-    }
-
-    fun saveModel(model: String) {
-        openAiRepository.setModel(model)
-    }
-
-    fun testConnection(key: String, model: String) {
-        viewModelScope.launch {
-            _isTesting.value = true
-            _testResult.value = null
-            val result = openAiRepository.testConnection(key, model)
-            result.onSuccess { msg ->
-                _testResult.value = msg
-            }.onFailure { err ->
-                _testResult.value = "Error: ${err.message ?: "Failed to connect to AI service"}"
             }
             _isTesting.value = false
         }

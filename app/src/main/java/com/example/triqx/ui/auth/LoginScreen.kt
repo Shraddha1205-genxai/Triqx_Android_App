@@ -157,6 +157,21 @@ private fun PhoneInputExpressive(
                 )
             }
 
+            if (uiState.sessionExpired) {
+                Surface(
+                    shape = Dimens.CardShape,
+                    color = MaterialTheme.colorScheme.secondaryContainer,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = "Your session expired. Verify your number to pick up where you left off - your priority contacts, apps and settings are saved.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        modifier = Modifier.padding(horizontal = Dimens.SpacingStandard, vertical = Dimens.SpacingMedium)
+                    )
+                }
+            }
+
             // Card Container using standardized TriqxCard
             TriqxCard(
                 contentPadding = PaddingValues(Dimens.SpacingStandard)

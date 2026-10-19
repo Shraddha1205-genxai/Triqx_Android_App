@@ -3,6 +3,7 @@ package com.example.triqx.ui.auth
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.triqx.data.model.Country
+import com.example.triqx.data.model.CountryList
 import com.example.triqx.data.repository.AuthRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
@@ -32,7 +33,9 @@ data class LoginUiState(
     val otpCode: String = "",
     val countdownSeconds: Int = 30,
     val isLoading: Boolean = false,
-    val errorMessage: String? = null
+    val errorMessage: String? = null,
+    /** The previous session lapsed; the user's data was kept and re-verifying restores it. */
+    val sessionExpired: Boolean = false
 ) {
     val fullPhoneNumber: String
         get() = "${countryCode.trim()} ${phoneNumber.trim()}"
@@ -63,6 +66,30 @@ class LoginViewModel @Inject constructor(
     val navigationEvent: SharedFlow<LoginNavigationEvent> = _navigationEvent.asSharedFlow()
 
     private var countdownJob: Job? = null
+
+    init {
+        prefillFromLapsedSession()
+    }
+
+    /** After a soft logout, pre-fill the phone number the user last verified so re-login is one tap. */
+    private fun prefillFromLapsedSession() {
+        if (!authRepository.needsReauth.value) return
+        val phone = authRepository.userProfile.value?.primaryPhone?.replace(" ", "").orEmpty()
+        val country = CountryList.countries
+            .filter { phone.startsWith(it.code) }
+            .maxByOrNull { it.code.length }
+        val national = (if (country != null) phone.removePrefix(country.code) else phone).filter { it.isDigit() }
+        _uiState.update {
+            it.copy(
+                sessionExpired = true,
+                phoneNumber = national.take(15),
+                countryCode = country?.code ?: it.countryCode,
+                countryName = country?.name ?: it.countryName,
+                countryIso = country?.isoCode ?: it.countryIso,
+                countryFlag = country?.flagEmoji ?: it.countryFlag
+            )
+        }
+    }
 
     fun onPhoneNumberChange(newPhone: String) {
         val digitsOnly = newPhone.filter { it.isDigit() }.take(15)

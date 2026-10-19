@@ -6,8 +6,9 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import android.os.Build
+import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.RemoteInput
 import com.example.triqx.MainActivity
 import com.example.triqx.R
@@ -15,12 +16,20 @@ import com.example.triqx.data.local.NotificationEntity
 import com.example.triqx.receiver.TriqxReplyReceiver
 
 /**
- * Posts AI assistant notifications with smart reply buttons.
- * Supports two styles (configurable in Settings):
- *   - "body_numbered": Full reply text in notification body with numbered send buttons
- *   - "chips_native": Clean body with native smart reply chips
+ * Posts AI assistant notifications with smart reply actions.
+ *
+ * Layout (Android shows at most 3 action buttons, so the old "Send #1/#2/#3 + Edit" layout
+ * silently hid the Edit button):
+ *   [1️⃣ Send #1]  [2️⃣ Send #2]  [💬 Reply]
+ * "Reply" carries a RemoteInput whose choices are ALL suggestions, so every reply (up to 5)
+ * is available as a tappable chip, plus free-text editing.
+ *
+ * When AI generation failed (empty [smartReplies]) the notification says so and offers only
+ * the free-text Reply action — it never shows placeholder text as a one-tap send.
  */
 object TriqxAssistantNotificationManager {
+
+    private const val TAG = "TriqxAssistantNotif"
 
     const val CHANNEL_ID = "triqx_ai_assistant"
     const val CHANNEL_NAME = "Triqx AI Assistant"
@@ -29,28 +38,31 @@ object TriqxAssistantNotificationManager {
     const val ACTION_OPEN_CONVERSATION = "com.example.triqx.ACTION_OPEN_CONVERSATION"
     const val EXTRA_CONVERSATION_KEY = "extra_conversation_key"
 
+    private const val TAG_PREFIX = "triqx_thread_"
+    private const val MAX_SEND_BUTTONS = 2   // + 1 Reply action = Android's 3-action limit
+    private const val MAX_LISTED_REPLIES = 5
+
     // =============================
     // Channel Setup
     // =============================
 
     fun createNotificationChannel(context: Context) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(CHANNEL_ID, CHANNEL_NAME, NotificationManager.IMPORTANCE_HIGH).apply {
-                description = CHANNEL_DESC
-                enableLights(true)
-                enableVibration(true)
-                setShowBadge(true)
-            }
-            val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            manager.createNotificationChannel(channel)
+        // minSdk is 31, so channels are always available.
+        val channel = NotificationChannel(CHANNEL_ID, CHANNEL_NAME, NotificationManager.IMPORTANCE_HIGH).apply {
+            description = CHANNEL_DESC
+            enableLights(true)
+            enableVibration(true)
+            setShowBadge(true)
         }
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        manager.createNotificationChannel(channel)
     }
 
     // =============================
     // Post / Update Notification
     // =============================
 
-    fun getNotificationTag(groupKey: String): String = "triqx_thread_${groupKey.hashCode()}"
+    fun getNotificationTag(groupKey: String): String = "$TAG_PREFIX${groupKey.hashCode()}"
 
     fun postOrUpdateAssistantNotification(
         context: Context,
@@ -65,24 +77,29 @@ object TriqxAssistantNotificationManager {
         timestamp: Long = System.currentTimeMillis(),
         smartReplies: List<String>
     ) {
-        createNotificationChannel(context)
         if (latestMessageText.isBlank()) return
+
+        // Android 13+: POST_NOTIFICATIONS may be denied/revoked, or the user may have muted the app.
+        if (!NotificationManagerCompat.from(context).areNotificationsEnabled()) {
+            Log.w(TAG, "Notifications disabled for Triqx; skipping assistant notification for $groupKey")
+            return
+        }
+
+        createNotificationChannel(context)
 
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val tag = getNotificationTag(groupKey)
+        val replies = smartReplies.map { it.trim() }.filter { it.isNotEmpty() }.distinct().take(MAX_LISTED_REPLIES)
 
         // Show max 2 lines of user message so AI replies have full priority
         val truncatedMessage = truncateToTwoLines(latestMessageText)
 
-        // Show replies as numbered bullets in the body
-        val replyList = smartReplies.take(3).mapIndexed { i, r ->
-            "${numberEmoji(i)} \"$r\""
-        }.joinToString("\n")
-
-        val fullBody = if (replyList.isNotBlank()) {
-            "$truncatedMessage\n\n✨ AI Suggested Replies:\n$replyList"
-        } else {
+        // The suggestions themselves are NOT repeated in the body: they are already offered by the Send
+        // buttons and as chips in the Edit action, so a text list here was a pure duplicate.
+        val fullBody = if (replies.isNotEmpty()) {
             truncatedMessage
+        } else {
+            "$truncatedMessage\n\n⚠️ AI replies unavailable right now. Tap Reply to respond."
         }
 
         val bigTextStyle = NotificationCompat.BigTextStyle()
@@ -97,7 +114,6 @@ object TriqxAssistantNotificationManager {
             putExtra(EXTRA_CONVERSATION_KEY, groupKey)
             data = Uri.parse("triqx://chat/${Uri.encode(groupKey)}")
         }
-
         val contentIntent = PendingIntent.getActivity(
             context,
             groupKey.hashCode(),
@@ -121,10 +137,13 @@ object TriqxAssistantNotificationManager {
             .setWhen(timestamp)
             .setShowWhen(true)
 
-        // Always add numbered send buttons + edit action
-        addNumberedActions(context, builder, groupKey, packageName, notificationKey, contactId, senderIdentifier, receiverIdentifier, contactOrTitle, smartReplies)
+        addActions(context, builder, groupKey, packageName, notificationKey, contactId, senderIdentifier, receiverIdentifier, contactOrTitle, replies)
 
-        manager.notify(tag, NOTIFICATION_ID, builder.build())
+        try {
+            manager.notify(tag, NOTIFICATION_ID, builder.build())
+        } catch (e: SecurityException) {
+            Log.w(TAG, "POST_NOTIFICATIONS not granted; cannot post assistant notification: ${e.message}")
+        }
     }
 
     /** Backward-compatibility overload accepting NotificationEntity list */
@@ -166,17 +185,24 @@ object TriqxAssistantNotificationManager {
         manager.cancel(getNotificationTag(groupKey), NOTIFICATION_ID)
     }
 
+    /** Cancels only Triqx assistant notifications (previously cancelAll() wiped every Triqx notification). */
     fun cancelAllAssistantNotifications(context: Context) {
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        manager.cancelAll()
+        try {
+            manager.activeNotifications
+                .filter { it.tag?.startsWith(TAG_PREFIX) == true }
+                .forEach { manager.cancel(it.tag, it.id) }
+        } catch (e: Exception) {
+            Log.w(TAG, "Selective cancel failed, falling back to cancelAll: ${e.message}")
+            manager.cancelAll()
+        }
     }
 
     // =============================
     // Action Builders (Private)
     // =============================
 
-    /** Numbered send buttons + edit action. */
-    private fun addNumberedActions(
+    private fun addActions(
         context: Context,
         builder: NotificationCompat.Builder,
         groupKey: String,
@@ -186,40 +212,54 @@ object TriqxAssistantNotificationManager {
         senderIdentifier: String?,
         receiverIdentifier: String?,
         contactOrTitle: String,
-        smartReplies: List<String>
+        replies: List<String>
     ) {
-        // Add "Send #1", "Send #2", "Send #3" buttons
-        smartReplies.take(3).forEachIndexed { index, replyText ->
-            val intent = createReplyIntent(context, TriqxReplyReceiver.ACTION_SMART_REPLY,
-                groupKey, packageName, notificationKey, contactId, senderIdentifier, receiverIdentifier, contactOrTitle, replyText)
-
-            val pendingIntent = PendingIntent.getBroadcast(
-                context, (groupKey.hashCode() * 10) + index, intent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
+        // One-tap send buttons. IMMUTABLE: the reply text is fixed in the intent, so nothing
+        // (including other apps) may modify it. Previously these were FLAG_MUTABLE.
+        replies.take(MAX_SEND_BUTTONS).forEachIndexed { index, replyText ->
+            val intent = createReplyIntent(
+                context, TriqxReplyReceiver.ACTION_SMART_REPLY, "send$index",
+                groupKey, packageName, notificationKey, contactId, senderIdentifier, receiverIdentifier, contactOrTitle, replyText
             )
-
-            builder.addAction(NotificationCompat.Action.Builder(0, "${numberEmoji(index)} Send #${index + 1}", pendingIntent).build())
+            val pendingIntent = PendingIntent.getBroadcast(
+                context, requestCode(groupKey, index), intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            builder.addAction(
+                NotificationCompat.Action.Builder(0, "${numberEmoji(index)} Send #${index + 1}", pendingIntent)
+                    .setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_REPLY)
+                    .setShowsUserInterface(false)
+                    .build()
+            )
         }
 
-        // Add "Edit" button with RemoteInput
-        val editIntent = createReplyIntent(context, TriqxReplyReceiver.ACTION_CUSTOM_REPLY,
-            groupKey, packageName, notificationKey, contactId, senderIdentifier, receiverIdentifier, contactOrTitle)
-
-        val editPending = PendingIntent.getBroadcast(
-            context, (groupKey.hashCode() * 10) + 9, editIntent,
+        // Reply action: free text + every suggestion as a chip. MUTABLE is required so the
+        // system can fill in the RemoteInput result.
+        val replyIntent = createReplyIntent(
+            context, TriqxReplyReceiver.ACTION_CUSTOM_REPLY, "reply",
+            groupKey, packageName, notificationKey, contactId, senderIdentifier, receiverIdentifier, contactOrTitle
+        )
+        val replyPending = PendingIntent.getBroadcast(
+            context, requestCode(groupKey, 9), replyIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
         )
-
         val remoteInput = RemoteInput.Builder(TriqxReplyReceiver.KEY_TEXT_REPLY)
-            .setLabel("Edit reply...")
+            .setLabel(if (replies.isEmpty()) "Type a reply…" else "Edit or pick a reply…")
+            .apply { if (replies.isNotEmpty()) setChoices(replies.toTypedArray<CharSequence>()) }
+            .setAllowFreeFormInput(true)
             .build()
-
         builder.addAction(
-            NotificationCompat.Action.Builder(0, "✏️ Edit", editPending)
+            NotificationCompat.Action.Builder(0, if (replies.isEmpty()) "💬 Reply" else "✏️ Edit / More", replyPending)
                 .addRemoteInput(remoteInput)
+                .setAllowGeneratedReplies(false) // our own suggestions are already supplied as choices
+                .setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_REPLY)
+                .setShowsUserInterface(false)
                 .build()
         )
     }
+
+    /** Distinct per conversation+slot; collisions are also prevented by the unique intent data URI. */
+    private fun requestCode(groupKey: String, slot: Int): Int = (groupKey.hashCode() * 31) + slot
 
     /**
      * Truncates message to at most 2 lines, keeping user message concise so AI replies have full priority.
@@ -256,10 +296,18 @@ object TriqxAssistantNotificationManager {
     // Helpers
     // =============================
 
-    /** Build a reply broadcast intent with all required extras. */
+    /**
+     * Build a reply broadcast intent with all required extras.
+     *
+     * The data URI makes every (conversation, slot) PendingIntent unique. Previously intents differed
+     * only in extras + a hashCode-based request code; two conversations whose codes collided shared one
+     * PendingIntent, and FLAG_UPDATE_CURRENT overwrote the extras — so tapping "Send" could deliver the
+     * reply to the WRONG conversation.
+     */
     private fun createReplyIntent(
         context: Context,
         action: String,
+        slot: String,
         groupKey: String,
         packageName: String,
         notificationKey: String,
@@ -271,6 +319,7 @@ object TriqxAssistantNotificationManager {
     ): Intent {
         return Intent(context, TriqxReplyReceiver::class.java).apply {
             this.action = action
+            data = Uri.parse("triqx://reply/${Uri.encode(groupKey)}/$slot")
             putExtra(TriqxReplyReceiver.EXTRA_GROUP_KEY, groupKey)
             putExtra(TriqxReplyReceiver.EXTRA_PACKAGE_NAME, packageName)
             putExtra(TriqxReplyReceiver.EXTRA_NOTIFICATION_KEY, notificationKey)
@@ -287,6 +336,8 @@ object TriqxAssistantNotificationManager {
     private fun numberEmoji(index: Int): String = when (index) {
         0 -> "1️⃣"
         1 -> "2️⃣"
-        else -> "3️⃣"
+        2 -> "3️⃣"
+        3 -> "4️⃣"
+        else -> "5️⃣"
     }
 }

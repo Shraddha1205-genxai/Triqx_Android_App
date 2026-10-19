@@ -3,7 +3,7 @@ package com.example.triqx.data.remote
 import android.util.Log
 import com.example.triqx.data.api.ApiRoutes
 import com.example.triqx.data.local.UserProfile
-import com.example.triqx.data.local.UserSessionManager
+import com.example.triqx.data.remote.auth.requireAuth
 import com.example.triqx.data.remote.dto.*
 import com.example.triqx.utils.Constants
 import com.google.gson.Gson
@@ -13,15 +13,14 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import java.io.IOException
 import javax.inject.Inject
-import javax.inject.Provider
 import javax.inject.Singleton
 
 @Singleton
 class RealOtpAuthService @Inject constructor(
     private val okHttpClient: OkHttpClient,
-    private val gson: Gson,
-    private val userSessionManagerProvider: Provider<UserSessionManager>
+    private val gson: Gson
 ) : OtpAuthService {
 
     companion object {
@@ -134,14 +133,11 @@ class RealOtpAuthService @Inject constructor(
     }
 
     override suspend fun updateProfile(accessToken: String?, profile: UserProfile): Result<UserProfile> = withContext(Dispatchers.IO) {
-        executeUpdateProfile(accessToken, profile, isRetry = false)
+        // The bearer token is attached (and refreshed on 401) centrally by TokenAuthInterceptor/Authenticator.
+        executeUpdateProfile(profile)
     }
 
-    private suspend fun executeUpdateProfile(
-        accessToken: String?,
-        profile: UserProfile,
-        isRetry: Boolean
-    ): Result<UserProfile> {
+    private fun executeUpdateProfile(profile: UserProfile): Result<UserProfile> {
         return try {
             val cleanPhone = normalizePhoneNumber(profile.primaryPhone)
             val requestDto = UpdateProfileRequest(
@@ -158,18 +154,14 @@ class RealOtpAuthService @Inject constructor(
 
             Log.i(TAG, "==================== [UPDATE PROFILE REQUEST] ====================")
             Log.i(TAG, "URL: POST $url")
-            Log.i(TAG, "Headers: Authorization: Bearer ${accessToken?.take(15)}...")
             Log.i(TAG, "Payload: $jsonBody")
             Log.i(TAG, "==================================================================")
 
             val reqBuilder = Request.Builder()
                 .url(url)
                 .addHeader("Content-Type", "application/json")
+                .requireAuth()
                 .post(jsonBody.toRequestBody(JSON_MEDIA_TYPE))
-
-            if (!accessToken.isNullOrBlank()) {
-                reqBuilder.addHeader("Authorization", "Bearer $accessToken")
-            }
 
             val response = okHttpClient.newCall(reqBuilder.build()).execute()
             val responseBody = response.body?.string().orEmpty()
@@ -178,22 +170,6 @@ class RealOtpAuthService @Inject constructor(
             Log.i(TAG, "HTTP Status: ${response.code} (${response.message})")
             Log.i(TAG, "Response Body: ${if (responseBody.isNotBlank()) responseBody else "(empty)"}")
             Log.i(TAG, "==================================================================")
-
-            if (!response.isSuccessful) {
-                // If token expired (HTTP 401) and we haven't retried yet, refresh token and retry
-                if ((response.code == 401 || responseBody.contains("token", ignoreCase = true)) && !isRetry) {
-                    val sessionManager = userSessionManagerProvider.get()
-                    Log.i(TAG, "[UPDATE PROFILE] Auth token rejected (HTTP ${response.code}). Attempting token refresh...")
-                    val refreshResult = sessionManager.refreshAccessToken(this, failedToken = accessToken)
-                    if (refreshResult.isSuccess) {
-                        val refreshedToken = refreshResult.getOrThrow()
-                        Log.i(TAG, "[UPDATE PROFILE] Token refreshed successfully. Retrying profile update...")
-                        return executeUpdateProfile(refreshedToken, profile, isRetry = true)
-                    } else {
-                        Log.w(TAG, "[UPDATE PROFILE] Token refresh failed: ${refreshResult.exceptionOrNull()?.message}")
-                    }
-                }
-            }
 
             val parsedResponse = try {
                 gson.fromJson(responseBody, UpdateProfileResponse::class.java)
@@ -253,15 +229,8 @@ class RealOtpAuthService @Inject constructor(
             val jsonBody = gson.toJson(requestDto)
             val url = ApiRoutes.Auth.refreshTokenUrl()
 
-            val logReq = buildString {
-                appendLine("==================== [AUTH REFRESH TOKEN REQUEST] ====================")
-                appendLine("URL: POST $url")
-                appendLine("Headers: Content-Type: application/json")
-                appendLine("Payload: $jsonBody")
-                append("=======================================================================")
-            }
-            Log.i(TAG, logReq)
-            Log.i("BackendAiService", logReq)
+            // Never log the payload: it contains the long-lived refresh token.
+            Log.i(TAG, "[AUTH REFRESH TOKEN REQUEST] POST $url")
 
             val request = Request.Builder()
                 .url(url)
@@ -272,14 +241,8 @@ class RealOtpAuthService @Inject constructor(
             val response = okHttpClient.newCall(request).execute()
             val responseBody = response.body?.string().orEmpty()
 
-            val logRes = buildString {
-                appendLine("==================== [AUTH REFRESH TOKEN RESPONSE] ===================")
-                appendLine("HTTP Status: ${response.code} (${response.message})")
-                appendLine("Response Body: ${if (responseBody.isNotBlank()) responseBody else "(empty)"}")
-                append("=======================================================================")
-            }
-            Log.i(TAG, logRes)
-            Log.i("BackendAiService", logRes)
+            // Never log the body on success: it contains the new access + refresh tokens.
+            Log.i(TAG, "[AUTH REFRESH TOKEN RESPONSE] HTTP ${response.code} (${response.message})")
 
             val parsedResponse = try {
                 gson.fromJson(responseBody, RefreshTokenResponse::class.java)
@@ -297,10 +260,16 @@ class RealOtpAuthService @Inject constructor(
                 }
             } else {
                 val errorMsg = parsedResponse?.message ?: "Token refresh failed (${response.code}: ${response.message})"
-                if (response.code == 401 || errorMsg.contains("Invalid refresh token", ignoreCase = true) || errorMsg.contains("revoked", ignoreCase = true)) {
+                Log.w(TAG, "[AUTH REFRESH TOKEN] Failed: HTTP ${response.code} - $errorMsg")
+                // Only HTTP 401 means the refresh token is genuinely invalid/revoked/expired and the
+                // user must sign in again. The backend now returns 503 for transient failures
+                // (DB down, cold start). 5xx, proxies' HTML error pages, etc. are retryable and must
+                // NOT log the user out — previously any body containing "Invalid refresh token" or
+                // "revoked" did.
+                if (response.code == 401) {
                     Result.failure(InvalidRefreshTokenException(errorMsg))
                 } else {
-                    Result.failure(Exception(errorMsg))
+                    Result.failure(IOException(errorMsg))
                 }
             }
         } catch (e: Exception) {

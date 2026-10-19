@@ -2,6 +2,7 @@ package com.example.triqx.data.remote
 
 import android.util.Log
 import com.example.triqx.data.local.UserSessionManager
+import com.example.triqx.data.remote.auth.requireAuth
 import com.example.triqx.data.remote.dto.ReplyMessageDto
 import com.example.triqx.data.remote.dto.SmartReplyRequest
 import com.example.triqx.data.remote.dto.SmartReplyResponse
@@ -22,7 +23,6 @@ import okhttp3.Response
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
-import javax.inject.Provider
 import javax.inject.Singleton
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -31,8 +31,7 @@ import kotlin.coroutines.resumeWithException
 class BackendAiService @Inject constructor(
     private val okHttpClient: OkHttpClient,
     private val gson: Gson,
-    private val sessionManager: UserSessionManager,
-    private val otpAuthServiceProvider: Provider<OtpAuthService>
+    private val sessionManager: UserSessionManager
 ) {
 
     companion object {
@@ -47,7 +46,7 @@ class BackendAiService @Inject constructor(
         baseUrl: String,
         request: SmartReplyRequest
     ): List<String> = withContext(Dispatchers.IO) {
-        executeGenerateReplies(baseUrl, request, isRetry = false)
+        executeGenerateReplies(baseUrl, request)
     }
 
     private val prettyGson by lazy {
@@ -62,89 +61,51 @@ class BackendAiService @Inject constructor(
 
     private suspend fun executeGenerateReplies(
         baseUrl: String,
-        request: SmartReplyRequest,
-        isRetry: Boolean
+        request: SmartReplyRequest
     ): List<String> {
         val endpointUrl = com.example.triqx.data.api.ApiRoutes.Ai.generateRepliesUrl(baseUrl)
         val requestJson = gson.toJson(request)
-        val prettyJson = try {
-            prettyGson.toJson(request)
-        } catch (_: Exception) {
-            requestJson
+
+        // Tokens are attached (proactively refreshed) and, on 401, refreshed + retried once by the
+        // OkHttp TokenAuthInterceptor/TokenAuthenticator. Here we only fail fast when there is no session.
+        if (!sessionManager.isLoggedIn.value) {
+            Log.w(TAG, "[BACKEND AI] No active session. Cannot generate smart replies without authentication.")
+            throw IOException(
+                if (sessionManager.needsReauth.value) "Session expired. Please log in again to refresh your account."
+                else "Authentication required to generate replies."
+            )
         }
 
-        val isExpired = sessionManager.isTokenExpired()
-        if (isExpired && !sessionManager.getAccessToken().isNullOrBlank()) {
-            val hasRefresh = !sessionManager.getRefreshToken().isNullOrBlank()
-            Log.i(TAG, "[BACKEND AI] Access token is expired. Attempting proactive refresh (has refreshToken: $hasRefresh)...")
-        }
-        val authToken = sessionManager.getValidAccessToken(otpAuthServiceProvider.get())
-        if (authToken.isNullOrBlank()) {
-            if (sessionManager.isLoggedIn.value) {
-                Log.w(TAG, "[BACKEND AI] User is logged in but has no valid access token. Session expired or revoked.")
-                throw IOException("Session expired. Please log in again to refresh your account.")
-            } else {
-                Log.w(TAG, "[BACKEND AI] User is not logged in. Cannot generate smart replies without authentication.")
-                throw IOException("Authentication required to generate replies.")
-            }
-        }
-        val authHeader = "Bearer $authToken"
-
-        val logRequest = buildString {
-            appendLine("==================== [AI GENERATE REPLIES REQUEST] ====================")
-            appendLine("URL: POST $endpointUrl")
-            appendLine("Headers:")
-            appendLine("  Content-Type: application/json")
-            appendLine("  Authorization: $authHeader")
-            appendLine("Payload:")
-            appendLine(prettyJson)
-            append("=======================================================================")
-        }
-        logMultiline(TAG, logRequest)
+        // Log a summary only: never the bearer token, message text or base64 images.
+        Log.i(
+            TAG,
+            "[AI GENERATE REPLIES REQUEST] POST $endpointUrl app=${request.appPackage} " +
+                "msgs=${request.messages.size} media=${request.messages.count { it.mediaBase64 != null }} " +
+                "replyCount=${request.replyCount}"
+        )
 
         val requestBuilder = Request.Builder()
             .url(endpointUrl)
             .addHeader("Content-Type", "application/json")
-            .addHeader("Authorization", authHeader)
+            .requireAuth()
             .post(requestJson.toRequestBody(JSON_MEDIA_TYPE))
 
         try {
             okHttpClient.executeCancellable(requestBuilder.build()).use { response ->
                 val responseBody = response.body?.string().orEmpty()
-                val logResponse = buildString {
-                    appendLine("==================== [AI GENERATE REPLIES RESPONSE] ===================")
-                    appendLine("HTTP Status: ${response.code} (${response.message})")
-                    appendLine("Response Body:")
-                    appendLine(if (responseBody.isNotBlank()) responseBody else "(empty body)")
-                    append("=======================================================================")
-                }
-                logMultiline(TAG, logResponse)
+                Log.i(TAG, "[AI GENERATE REPLIES RESPONSE] HTTP ${response.code} (${response.message})")
 
                 if (!response.isSuccessful) {
-                    // If token expired (HTTP 401) and we haven't retried yet, attempt automatic silent token refresh
-                    if ((response.code == 401 || responseBody.contains("expired", ignoreCase = true) || responseBody.contains("token", ignoreCase = true)) && !isRetry) {
-                        val hasRefresh = !sessionManager.getRefreshToken().isNullOrBlank()
-                        Log.i(TAG, "[BACKEND AI] Auth token rejected (HTTP ${response.code}). Attempting token refresh (refreshToken present: $hasRefresh)...")
-                        val refreshResult = sessionManager.refreshAccessToken(
-                            otpAuthService = otpAuthServiceProvider.get(),
-                            failedToken = authToken
-                        )
-                        if (refreshResult.isSuccess) {
-                            Log.i(TAG, "[BACKEND AI] Token refreshed successfully. Retrying request with fresh token...")
-                            return executeGenerateReplies(baseUrl, request, isRetry = true)
-                        } else {
-                            val failureReason = refreshResult.exceptionOrNull()?.message ?: "Unknown error"
-                            Log.w(TAG, "[BACKEND AI] Token refresh failed: $failureReason")
-                        }
+                    // 401 refresh + retry is handled centrally by TokenAuthenticator; a 401 here means it failed.
+                    val serverError = try {
+                        gson.fromJson(responseBody, SmartReplyResponse::class.java)?.error
+                    } catch (_: Exception) {
+                        null
                     }
-
-                    val friendlyMessage = when {
-                        response.code == 401 || responseBody.contains("token", ignoreCase = true) ->
-                            "Session expired. Please log in again to refresh your account."
-                        responseBody.isNotBlank() ->
-                            "Backend returned HTTP ${response.code}: $responseBody"
-                        else ->
-                            "Backend returned HTTP ${response.code}"
+                    val friendlyMessage = when (response.code) {
+                        401 -> "Session expired. Please log in again to refresh your account."
+                        429 -> "Too many AI requests. Please try again shortly."
+                        else -> "Backend returned HTTP ${response.code}" + (serverError?.let { ": $it" } ?: "")
                     }
                     throw IOException(friendlyMessage)
                 }
@@ -154,6 +115,11 @@ class BackendAiService @Inject constructor(
                 }
 
                 val parsed = gson.fromJson(responseBody, SmartReplyResponse::class.java)
+                // Honour the backend's success flag: success=false means the replies are NOT real
+                // model output and must never be shown as suggestions or sent.
+                if (!parsed.success) {
+                    throw IOException("AI reply generation failed: ${parsed.error ?: "unknown error"}")
+                }
                 val validReplies = parsed.replies
                     .map { it.trim() }
                     .filter { it.isNotBlank() }
@@ -163,7 +129,7 @@ class BackendAiService @Inject constructor(
                     throw IOException("Backend returned empty replies list")
                 }
 
-                Log.i(TAG, "<=== [PARSED ${validReplies.size} REPLIES FROM BACKEND]: $validReplies")
+                Log.i(TAG, "<=== [PARSED ${validReplies.size} REPLIES FROM BACKEND]")
                 return validReplies
             }
         } catch (e: CancellationException) {

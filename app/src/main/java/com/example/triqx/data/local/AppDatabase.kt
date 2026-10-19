@@ -9,9 +9,10 @@ import androidx.room.TypeConverters
         ContactEntity::class,
         AppEntity::class,
         NotificationEntity::class,
-        ConversationEntity::class
+        ConversationEntity::class,
+        ObligationEntity::class
     ],
-    version = 13,
+    version = 14,
     exportSchema = false
 )
 @TypeConverters(Converters::class)
@@ -20,4 +21,5 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun appDao(): AppDao
     abstract fun notificationDao(): NotificationDao
     abstract fun conversationDao(): ConversationDao
+    abstract fun obligationDao(): ObligationDao
 }
